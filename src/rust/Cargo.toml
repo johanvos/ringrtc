@@ -11,8 +11,14 @@ edition = "2018"
 description = "A Rust interface for WebRTC"
 license = "AGPL-3.0-only"
 
+[build-dependencies]
+cbindgen = "0.20.0"
+
 [lib]
+#crate_type = ["cdylib"]
 crate_type = ["cdylib", "staticlib", "lib"]
+path = "src/lib.rs"
+required-features = ["native", "simnet"]
 
 [[bin]]
 name = "cli"
@@ -71,6 +77,7 @@ default = []
 protobuf_gen_deps = ["prost-build"]
 sim = ["rand_chacha"]
 electron = ["neon", "native"]
+java = []
 native = []  # We have this so we can more easily disable things only native clients need
 simnet = []  # We have this so we can more easily disable things only simulated native client need
 http = ["ureq", "rustls", "webpki"]

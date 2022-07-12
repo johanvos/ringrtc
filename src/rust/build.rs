@@ -3,10 +3,19 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //
 
+extern crate cbindgen;
 use std::env;
 use std::process::Command;
 
 fn main() {
+    let crate_dir = env::var("CARGO_MANIFEST_DIR").unwrap();
+    cbindgen::Builder::new()
+      .with_crate(crate_dir)
+      .with_language(cbindgen::Language::C)
+      .generate()
+      .expect("Unable to generate bindings")
+      .write_to_file("tringlib.h");
+
     let target = env::var("TARGET").unwrap();
     let profile = env::var("PROFILE").unwrap();
     let out_dir = env::var("OUTPUT_DIR");

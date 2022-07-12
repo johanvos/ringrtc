@@ -49,10 +49,12 @@ android: $(ANDROID_TARGETS)
 $(OUTPUT_DIR)/android.env:
 	$(Q) echo "Preparing Android workspace"
 	$(Q) ./bin/prepare-workspace android
+	$(Q) echo "Preparing Android workspace done"
 
 android/%: ARCH = $(word 1, $(subst /, , $*))
 android/%: TYPE = $(word 2, $(subst /, , $*))
 android/%: $(OUTPUT_DIR)/android.env
+	$(Q) echo "Prepared Android workspace"
 	$(Q) ./bin/build-aar --compile-only --$(TYPE)-build --arch $(ARCH) -j$(JOBS)
 
 ios: $(IOS_TARGETS)
@@ -96,6 +98,18 @@ cli:
 	else \
 		echo "cli: Debug build" ; \
 		./bin/build-cli -d ; \
+	fi
+java:
+	$(Q) if [ "$(PLATFORM)" != "" ] ; then \
+		echo "java: Preparing workspace for $(PLATFORM)" ; \
+		./bin/prepare-workspace $(PLATFORM) ; \
+	fi
+	$(Q) if [ "$(TYPE)" = "release" ] ; then \
+		echo "java: Release build" ; \
+		./bin/build-java -r ; \
+	else \
+		echo "java: Debug build" ; \
+		./bin/build-java -d ; \
 	fi
 
 PHONY += clean

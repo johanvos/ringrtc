@@ -24,6 +24,10 @@ use crate::webrtc;
 use std::time::Duration;
 
 #[no_mangle]
+pub extern "C" fn javaring() {
+}
+
+#[no_mangle]
 #[allow(non_snake_case)]
 pub unsafe extern "C" fn Java_org_signal_ringrtc_CallManager_ringrtcGetBuildInfo(
     env: JNIEnv,

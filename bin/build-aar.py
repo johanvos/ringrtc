@@ -134,19 +134,22 @@ def RunSdkmanagerLicenses(dry_run):
     executable = os.path.join('third_party', 'android_sdk', 'public',
                               'cmdline-tools', 'latest', 'bin', 'sdkmanager')
     cmd = [ executable, '--licenses' ]
-    logging.debug('Running: {}'.format(cmd))
+    logging.info('Running: {}'.format(cmd))
     if dry_run is False:
         subprocess.check_call(cmd)
 
 def RunGn(dry_run, args):
+    cwd = os.getcwd()
+    logging.warning('CWD = {}'.format(cwd))
     cmd = [ 'gn' ] + args
-    logging.debug('Running: {}'.format(cmd))
+    logging.info('RUNNing: {}'.format(cmd))
+    logging.warning('Running: {}'.format(cmd))
     if dry_run is False:
         subprocess.check_call(cmd)
 
 def RunNinja(dry_run, args):
     cmd = [ 'ninja' ] + args
-    logging.debug('Running: {}'.format(cmd))
+    logging.warning('Running: {}'.format(cmd))
     if dry_run is False:
         subprocess.check_call(cmd)
 
@@ -175,9 +178,10 @@ def GetGradleBuildDir(build_dir):
 def BuildArch(dry_run, build_dir, arch, debug_build, extra_gn_args,
               extra_gn_flags, extra_ninja_flags, jobs):
 
-    logging.info('Building: {} ...'.format(arch))
+    logging.warning('Building: {} ...'.format(arch))
 
     output_dir = GetArchBuildDir(build_dir, arch, debug_build)
+    logging.warning('dir = {}'.format(output_dir))
     gn_args = {
         'target_os'           : '"android"',
         'target_cpu'          : '"{}"'.format(arch),
@@ -197,6 +201,7 @@ def BuildArch(dry_run, build_dir, arch, debug_build, extra_gn_args,
     gn_args_string = '--args=' + ' '.join(
         [k + '=' + v for k, v in gn_args.items()] + extra_gn_args)
 
+    logging.info("PREPARE ARGS");
     gn_total_args = [ 'gen', output_dir, gn_args_string ] + extra_gn_flags
     RunGn(dry_run, gn_total_args)
 
@@ -368,7 +373,8 @@ def clean_dir(directory, dry_run):
         shutil.rmtree(directory, ignore_errors=True)
 
 def main():
-
+    logging.info("RRRRRRRRRRRRRRRRRRRRRRRR0");
+    logging.warning('RRRRRRRRRRRRRRRRRRRRRRRR0');
     args = ParseArgs()
 
     if args.dry_run is True:
@@ -377,9 +383,11 @@ def main():
     if args.verbose is True:
         log_level = logging.DEBUG
     else:
-        log_level = logging.INFO
+        log_level = logging.DEBUG
 
-    logging.basicConfig(level=log_level, format='%(levelname).1s:%(message)s')
+    logging.basicConfig(stream=sys.stdout, level=log_level, format='%(levelname).1s:%(message)s')
+    logging.warning("sssRRRRRRRRRRRRRRRRRRRRRRRR0");
+    logging.warning('sssRRRRRRRRRRRRRRRRRRRRRRRR0');
 
     if args.quiet is True:
         logging.disable(logging.CRITICAL)

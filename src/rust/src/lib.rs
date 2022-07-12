@@ -92,6 +92,13 @@ pub mod electron;
 #[cfg(feature = "native")]
 pub mod native;
 
+#[cfg(feature = "java")]
+mod java {
+    mod java;
+    mod java_platform;
+    mod call_manager;
+}
+
 /// Foreign Function Interface (FFI) to WebRTC C++ library.
 pub mod webrtc {
     pub mod arc;

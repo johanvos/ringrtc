@@ -32,16 +32,21 @@ case "$1" in
         exit 1
 esac
 
+echo "PPPP0"
 # shellcheck source=bin/env.sh
 . "$(dirname "$0")"/env.sh
+echo "PPPP1"
 
 mkdir -p "$OUTPUT_DIR"
 echo "WEBRTC_PLATFORM=$WEBRTC_PLATFORM" > "${OUTPUT_DIR}/platform.env"
 
+echo "PPPP2"
 # WebRTC checkout
 "$BIN_DIR"/gsync-webrtc "$WEBRTC_REVISION"
+echo "PPPP3"
 
 # Platform specific setup
 prepare_workspace_platform
+echo "PPPP4"
 
 echo "WEBRTC_PLATFORM=$WEBRTC_PLATFORM" > "${OUTPUT_DIR}/${WEBRTC_PLATFORM}.env"

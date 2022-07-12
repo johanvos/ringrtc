@@ -74,7 +74,7 @@ macro_rules! handle_active_call_api {
         let mut call_manager = $s.clone();
         let mut cm_error = $s.clone();
         let future = lazy(move |_| $f(&mut call_manager $( , $a)*)).map_err(move |err| {
-            error!("Future {} failed: {}", stringify!($f), err);
+            error!("Future {} Failed: {}", stringify!($f), err);
             let _ = cm_error.internal_api_error( err);
         });
         $s.worker_spawn(future)
