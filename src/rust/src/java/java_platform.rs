@@ -32,9 +32,11 @@ impl JavaMediaStream {
 
 impl PlatformItem for JavaMediaStream {
 }
+impl PlatformItem for PeerId {}
 
 pub struct JavaPlatform {
 }
+
 
 impl JavaPlatform {
     pub fn new() -> Self {

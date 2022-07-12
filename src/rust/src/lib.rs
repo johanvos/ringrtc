@@ -58,6 +58,7 @@ pub mod protobuf {
 
 #[cfg(any(target_os = "android", feature = "check-all"))]
 /// Android specific implementation.
+/// cbindgen:ignore
 mod android {
     #[macro_use]
     mod jni_util;
