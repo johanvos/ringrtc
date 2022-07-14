@@ -95,6 +95,7 @@ pub enum MessageType {
 
 /// The caller sends this to several callees to initiate the call.
 #[derive(Clone)]
+#[repr(C)]
 pub struct Offer {
     pub call_media_type: CallMediaType,
     pub opaque: Vec<u8>,
@@ -444,6 +445,7 @@ pub struct SendHangup {
 }
 
 /// An Offer with extra info specific to receiving
+#[repr(C)]
 pub struct ReceivedOffer {
     pub offer: Offer,
     /// The approximate age of the offer

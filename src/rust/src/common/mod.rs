@@ -16,6 +16,7 @@ pub type Result<T> = std::result::Result<T, anyhow::Error>;
 
 /// Unique call identification number.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[repr(C)]
 pub struct CallId {
     id: u64,
 }

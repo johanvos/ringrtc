@@ -250,7 +250,7 @@ where
         };
         write!(
             f,
-            "thread: {:?}, platform: ({}), active_call_id: ({})",
+            "thread: {:?}, platForm: ({}), active_call_id: ({})",
             thread::current().id(),
             platform,
             active_call_id

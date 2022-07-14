@@ -77,6 +77,7 @@ mod android {
 
 #[cfg(any(target_os = "ios", feature = "check-all"))]
 /// iOS specific implementation.
+/// cbindgen:ignore
 mod ios {
     mod api {
         pub mod call_manager_interface;
@@ -154,3 +155,4 @@ pub mod sim {
 pub mod simnet {
     pub mod router;
 }
+

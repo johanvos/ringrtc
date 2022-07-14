@@ -16,8 +16,13 @@ use crate::webrtc::media::{MediaStream, VideoTrack};
 use crate::webrtc::peer_connection::{AudioLevel, ReceivedAudioLevel};
 use crate::webrtc::peer_connection_observer::NetworkRoute;
 
+#[derive(Clone)]
+#[repr(C)]
+pub struct PeerId {
+    pub address: u64
+}
+impl PlatformItem for PeerId {}
 
-pub type PeerId = String;
 pub type JavaCallContext = String;
 pub type JavaConnection = String;
 
@@ -25,15 +30,15 @@ pub struct JavaMediaStream {
 }
 
 impl JavaMediaStream {
-    pub fn new(incoming_media: MediaStream) -> Self {
+    pub fn new(_incoming_media: MediaStream) -> Self {
         Self {}
     }
 }
 
 impl PlatformItem for JavaMediaStream {
 }
-impl PlatformItem for PeerId {}
 
+#[repr(C)]
 pub struct JavaPlatform {
 }
 
@@ -51,14 +56,24 @@ impl JavaPlatform {
 }
 
 impl http::Delegate for JavaPlatform {
-    fn send_request(&self, request_id: u32, request: http::Request) {
+    fn send_request(&self, _request_id: u32, _request: http::Request) {
         info!("JavaPlatform.send_http_request NOT IMPLEMENTED");
         // if let Err(err) = self.send_http_request(request_id, request) {
        // error!("JavaPlatform.send_http_request failed: {:?}", err);
         // }
     }
 }
+impl fmt::Display for PeerId {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "PeerId")
+    }
+}
 
+impl fmt::Debug for PeerId {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}", self)
+    }
+}
 
 impl Platform for JavaPlatform {
     type AppRemotePeer = PeerId; 
@@ -76,7 +91,7 @@ impl Platform for JavaPlatform {
             remote_peer1, remote_peer2
         );
 
-        Ok(remote_peer1 == remote_peer2)
+        Ok(remote_peer1.address == remote_peer2.address)
     }
 
     fn create_connection(
@@ -106,10 +121,10 @@ impl Platform for JavaPlatform {
 
     fn on_start_call(
         &self,
-        remote_peer: &Self::AppRemotePeer,
+        _remote_peer: &Self::AppRemotePeer,
         call_id: CallId, 
         direction: CallDirection,
-        call_media_type: CallMediaType,
+        _call_media_type: CallMediaType,
     ) -> Result<()> {
         info!(
             "on_start_call(): call_id: {}, direction: {}",
@@ -120,7 +135,7 @@ impl Platform for JavaPlatform {
 
     fn on_event(
         &self,
-        remote_peer: &Self::AppRemotePeer,
+        _remote_peer: &Self::AppRemotePeer,
         _call_id: CallId, 
         event: ApplicationEvent,
     ) -> Result<()> {
@@ -130,7 +145,7 @@ impl Platform for JavaPlatform {
 
      fn on_network_route_changed(
         &self,
-        remote_peer: &Self::AppRemotePeer,
+        _remote_peer: &Self::AppRemotePeer,
         network_route: NetworkRoute,
     ) -> Result<()> {
         info!(
@@ -142,7 +157,7 @@ impl Platform for JavaPlatform {
 
     fn on_audio_levels(
         &self,
-        remote_peer: &Self::AppRemotePeer,
+        _remote_peer: &Self::AppRemotePeer,
         captured_level: AudioLevel,
         received_level: AudioLevel,
     ) -> Result<()> {
@@ -156,9 +171,9 @@ impl Platform for JavaPlatform {
 
     fn on_send_offer(
         &self,
-        remote_peer: &Self::AppRemotePeer,
+        _remote_peer: &Self::AppRemotePeer,
         call_id: CallId,
-        offer: signaling::Offer,
+        _offer: signaling::Offer,
     ) -> Result<()> {
         info!("on_send_offer(): call_id: {}", call_id);
         Ok(())
@@ -166,9 +181,9 @@ impl Platform for JavaPlatform {
 
     fn on_send_answer(
         &self,
-        remote_peer: &Self::AppRemotePeer,
+        _remote_peer: &Self::AppRemotePeer,
         call_id: CallId,
-        send: signaling::SendAnswer,
+        _send: signaling::SendAnswer,
     ) -> Result<()> {
         info!(
             "on_send_answer(): call_id: {}",
@@ -180,9 +195,9 @@ impl Platform for JavaPlatform {
 
     fn on_send_ice(
         &self,
-        remote_peer: &Self::AppRemotePeer,
+        _remote_peer: &Self::AppRemotePeer,
         call_id: CallId,
-        send: signaling::SendIce,
+        _send: signaling::SendIce,
     ) -> Result<()> {
         info!(
             "on_send_ice(): call_id: {}",
@@ -193,24 +208,24 @@ impl Platform for JavaPlatform {
 
     fn on_send_hangup(
         &self,
-        remote_peer: &Self::AppRemotePeer,
+        _remote_peer: &Self::AppRemotePeer,
         call_id: CallId,
-        send: signaling::SendHangup,
+        _send: signaling::SendHangup,
     ) -> Result<()> {
         info!("on_send_hangup(): call_id: {}", call_id);
         Ok(())
     }
 
-    fn on_send_busy(&self, remote_peer: &Self::AppRemotePeer, call_id: CallId) -> Result<()> {
+    fn on_send_busy(&self, _remote_peer: &Self::AppRemotePeer, call_id: CallId) -> Result<()> {
         info!("on_send_busy(): call_id: {}", call_id);
         Ok(())
     }
 
     fn send_call_message(
         &self,
-        recipient_uuid: Vec<u8>,
-        message: Vec<u8>,
-        urgency: group_call::SignalingMessageUrgency,
+        _recipient_uuid: Vec<u8>,
+        _message: Vec<u8>,
+        _urgency: group_call::SignalingMessageUrgency,
     ) -> Result<()> {
         info!("send_call_message():");
         Ok(())
@@ -218,9 +233,9 @@ impl Platform for JavaPlatform {
 
     fn send_call_message_to_group(
         &self,
-        group_id: Vec<u8>,
-        message: Vec<u8>,
-        urgency: group_call::SignalingMessageUrgency,
+        _group_id: Vec<u8>,
+        _message: Vec<u8>,
+        _urgency: group_call::SignalingMessageUrgency,
     ) -> Result<()> {
         info!("send_call_message_to_group():");
         Ok(())
@@ -237,14 +252,14 @@ impl Platform for JavaPlatform {
     fn connect_incoming_media(
         &self,
         _remote_peer: &Self::AppRemotePeer,
-        app_call_context: &Self::AppCallContext,
-        incoming_media: &Self::AppIncomingMedia,
+        _app_call_context: &Self::AppCallContext,
+        _incoming_media: &Self::AppIncomingMedia,
     ) -> Result<()> {
         info!("connect_incoming_media():");
         Ok(())
     }
 
-    fn disconnect_incoming_media(&self, app_call_context: &Self::AppCallContext) -> Result<()> {
+    fn disconnect_incoming_media(&self, _app_call_context: &Self::AppCallContext) -> Result<()> {
         info!("disconnect_incoming_media():");
         Ok(())
     }
@@ -252,65 +267,65 @@ impl Platform for JavaPlatform {
     /// Notify the application that an offer is too old.
     fn on_offer_expired(
         &self,
-        remote_peer: &Self::AppRemotePeer,
-        call_id: CallId, 
-        age: Duration,
+        _remote_peer: &Self::AppRemotePeer,
+        _call_id: CallId, 
+        _age: Duration,
     ) -> Result<()> {
         info!("NOT IMPLEMENTED");
         Ok(())
     }
 
     /// Notify the application that the call is completely concluded
-    fn on_call_concluded(&self, remote_peer: &Self::AppRemotePeer, call_id: CallId) -> Result<()> {
+    fn on_call_concluded(&self, _remote_peer: &Self::AppRemotePeer, _call_id: CallId) -> Result<()> {
         info!("NOT IMPLEMENTED");
         Ok(())
     }
 
     fn group_call_ring_update(
         &self,
-        group_id: group_call::GroupId,
-        ring_id: group_call::RingId,
-        sender: UserId,
-        update: group_call::RingUpdate,
+        _group_id: group_call::GroupId,
+        _ring_id: group_call::RingId,
+        _sender: UserId,
+        _update: group_call::RingUpdate,
     ) {
         info!("NOT IMPLEMENTED")
     }
 
-    fn request_membership_proof(&self, client_id: group_call::ClientId) {
+    fn request_membership_proof(&self, _client_id: group_call::ClientId) {
         info!("NOT IMPLEMENTED")
     }
 
-    fn request_group_members(&self, client_id: group_call::ClientId) {
+    fn request_group_members(&self, _client_id: group_call::ClientId) {
         info!("NOT IMPLEMENTED")
     }
 
     fn handle_connection_state_changed(
         &self,
-        client_id: group_call::ClientId,
-        connection_state: group_call::ConnectionState,
+        _client_id: group_call::ClientId,
+        _connection_state: group_call::ConnectionState,
     ) {
         info!("NOT IMPLEMENTED")
     }
 
     fn handle_network_route_changed(
         &self,
-        client_id: group_call::ClientId,
-        network_route: NetworkRoute,
+        _client_id: group_call::ClientId,
+        _network_route: NetworkRoute,
     ) {
         info!("NOT IMPLEMENTED")
     }
 
     fn handle_join_state_changed(
         &self,
-        client_id: group_call::ClientId,
-        join_state: group_call::JoinState,
+        _client_id: group_call::ClientId,
+        _join_state: group_call::JoinState,
     ) {
         info!("NOT IMPLEMENTED")
     }
     fn handle_remote_devices_changed(
         &self,
-        client_id: group_call::ClientId,
-        remote_device_states: &[group_call::RemoteDeviceState],
+        _client_id: group_call::ClientId,
+        _remote_device_states: &[group_call::RemoteDeviceState],
         _reason: group_call::RemoteDevicesChangedReason,
     ) {
         info!("NOT IMPLEMENTED")
@@ -318,18 +333,18 @@ impl Platform for JavaPlatform {
 
     fn handle_incoming_video_track(
         &self,
-        client_id: group_call::ClientId,
-        remote_demux_id: DemuxId,
-        incoming_video_track: VideoTrack,
+        _client_id: group_call::ClientId,
+        _remote_demux_id: DemuxId,
+        _incoming_video_track: VideoTrack,
     ) {
         info!("NOT IMPLEMENTED")
     }
 
     fn handle_peek_changed(
         &self,
-        client_id: group_call::ClientId,
-        peek_info: &PeekInfo,
-        joined_members: &HashSet<UserId>,
+        _client_id: group_call::ClientId,
+        _peek_info: &PeekInfo,
+        _joined_members: &HashSet<UserId>,
     ) {
         info!("NOT IMPLEMENTED")
     }
@@ -343,7 +358,7 @@ impl Platform for JavaPlatform {
         info!("NOT IMPLEMENTED")
     }
 
-    fn handle_ended(&self, client_id: group_call::ClientId, reason: group_call::EndReason) {
+    fn handle_ended(&self, _client_id: group_call::ClientId, _reason: group_call::EndReason) {
         info!("NOT IMPLEMENTED")
     }
 }
@@ -361,8 +376,8 @@ impl fmt::Debug for JavaPlatform {
 }
 
 impl sfu::Delegate for JavaPlatform {
-    fn handle_peek_result(&self, request_id: u32, peek_result: PeekResult) {
-        info!("JavaPlatform::NYIhandle_peek_result(): id: {}", request_id);
+    fn handle_peek_result(&self, _request_id: u32, _peek_result: PeekResult) {
+        info!("JavaPlatform::NYIhandle_peek_result(): id: {}", _request_id);
     }
 
 }
