@@ -21,6 +21,15 @@ use crate::webrtc::peer_connection_observer::NetworkRoute;
 pub struct PeerId {
     pub address: u64
 }
+
+impl PeerId {
+    pub fn new() -> Self {
+        Self {
+            address: 0
+        }
+    }
+}
+
 impl PlatformItem for PeerId {}
 
 pub type JavaCallContext = String;

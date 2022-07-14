@@ -1,4 +1,7 @@
+extern crate log;
 use std::time::Duration;
+use log::{debug, error, log_enabled, info, Level};
+
 
 use crate::common::{CallId, CallMediaType, DeviceId, Result};
 use crate::core::platform::{Platform, PlatformItem};
@@ -6,8 +9,18 @@ use crate::core::signaling;
 
 use crate::core::util::ptr_as_mut;
 use crate::java::call_manager::JavaCallManager;
-use crate::java::java_platform::JavaPlatform;
+use crate::java::java_platform::{JavaPlatform,PeerId};
 use crate::lite::http;
+
+    fn init_logging() {
+        env_logger::builder()
+            .is_test(true)
+            .filter(None, log::LevelFilter::Debug)
+            .init();
+println!("LOGINIT done");
+info!("IIIINFO");
+    }
+
 
 #[no_mangle]
 pub unsafe extern "C" fn createCallManager() -> i64 {
@@ -38,6 +51,11 @@ pub unsafe extern "C" fn offerFromAppReceived() {
     println! ("Got offer with some bytes!")
 }
 
+#[no_mangle]
+pub unsafe extern "C" fn dribbeldedribbel() {
+    println! ("Got offer with some bytes!")
+}
+
 fn create_java_call_manager() -> Result<i64> {
     let platform = JavaPlatform::new();
     let http_client = http::DelegatingClient::new(platform.try_clone()?);
@@ -61,15 +79,18 @@ pub unsafe extern "C" fn received_offer(
     sender_identity_key: MyKey,
     receiver_identity_key: MyKey,
 ) -> i64 {
-    let _call_manager = ptr_as_mut(call_manager as *mut JavaCallManager) ;
     println! ("Sort of received offer for callid {} and callmanager ", call_id);
+    init_logging();
+    let call_manager = ptr_as_mut(call_manager as *mut JavaCallManager).unwrap() ;
+    println! ("WE ALSO GOT A CALLMANAGER NOW!");
     println! ("opaquelen = {} and opaquedata = {:?}", opaque.len, opaque.data);
     // let sender_identity_key = sender_identity_key.data.to_vec();
-    println! ("sik0 = {}, sik3 = {}, sik = {:?}", sender_identity_key.data[0], sender_identity_key.data[3], sender_identity_key.data);
+    println! ("sik0 = {}, sik = {:?}", sender_identity_key.data[0], sender_identity_key.data);
     let receiver_identity_key = receiver_identity_key.data.to_vec();
     let sender_identity_key = sender_identity_key.data.to_vec();
     let opvec = opaque.data.to_vec();
     let opvec2 = opvec[0..opaque.len].to_vec();
+    let myremote_peer = PeerId::new();
     let received_offer = signaling::ReceivedOffer {
             // offer: signaling::Offer::new(call_media_type, opaque.data.get(0,opaque.len).to_vec()).unwrap(),
             offer: signaling::Offer::new(call_media_type, opvec2).unwrap(),
@@ -80,7 +101,12 @@ pub unsafe extern "C" fn received_offer(
             sender_identity_key,
             receiver_identity_key,
         };
-    14
+    let result = call_manager.received_offer(
+             myremote_peer,
+             call_id,
+             received_offer);
+    println!("RESULT of received_offer = {:?}", result);
+    16
 }
 
 #[no_mangle]
