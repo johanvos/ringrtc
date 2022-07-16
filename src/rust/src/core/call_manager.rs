@@ -495,7 +495,8 @@ where
         call_id: CallId,
         received: signaling::ReceivedOffer,
     ) -> Result<()> {
-        info!("API:received_offer():");
+        println!("API:received_offer():");
+        info!("IIAPI:received_offer():");
 
         let mut call_manager = self.clone();
         let mut cm_error = self.clone();
@@ -1303,6 +1304,7 @@ where
                 incoming_call.inject_start_call()?
             }
         }
+info!("Ready to return");
         Ok(())
     }
 

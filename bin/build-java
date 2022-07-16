@@ -4,8 +4,8 @@
 # Copyright 2019-2021 Signal Messenger, LLC
 # SPDX-License-Identifier: AGPL-3.0-only
 #
-export JAVA_HOME=/mnt/data/panama/jdk-19
-export PANAMA=/mnt/data/panama/jdk-19
+export JAVA_HOME=/opt/jdk-19+31
+export JEXTRACT=/opt/jextract
 
 set -e
 
@@ -111,10 +111,10 @@ export MACOSX_DEPLOYMENT_TARGET="10.10"
         # TODO: Figure out why and fix this
         rm -f target/debug/deps/libringrtc.rlib
 
-        echo "running OUTPUT_DIR=${OUTPUT_DIR} cargo build --lib --features=native,java"
-        # cargo clean
-        OUTPUT_DIR="${OUTPUT_DIR}" cargo build
-        OUTPUT_DIR="${OUTPUT_DIR}" cargo build --lib --features=native,java
+        echo "running RUST_LOG=debug OUTPUT_DIR=${OUTPUT_DIR} cargo build --lib --features=native,java"
+        #cargo clean
+        RUST_LOG=debug RUST_BACKTRACE=1 OUTPUT_DIR="${OUTPUT_DIR}" cargo build
+        RUST_LOG=debug RUST_BACKTRACE=1 OUTPUT_DIR="${OUTPUT_DIR}" cargo build --lib --features=native,java
         echo "Created src/rust/target/debug/libringrtc.so"
     else
         # HACK: IF we don't remove this file, changes to rffi code will not make it into the binary.
@@ -125,6 +125,6 @@ export MACOSX_DEPLOYMENT_TARGET="10.10"
         echo "Created src/rust/target/release/libringrtc.so"
     fi
     mkdir -p ../../src/java
-    ${PANAMA}/bin/jextract -I/opt/jdk/include -I/opt/jdk/include/linux -d /tmp/rh/classes -t org.rust -l ringrtc -- tringlib.h
-    ${PANAMA}/bin/jextract -I/opt/jdk/include -I/opt/jdk/include/linux -d ../java/mvn/rustheaders/src/main/java --source -t org.rust -l ringrtc -- tringlib.h
+    ${JEXTRACT}/bin/jextract -I/opt/jdk/include -I/opt/jdk/include/linux --output /tmp/rh/classes -t org.rust -l ringrtc tringlib.h
+    ${JEXTRACT}/bin/jextract -I/opt/jdk/include -I/opt/jdk/include/linux --output ../java/mvn/rustheaders/src/main/java --source -t org.rust -l ringrtc tringlib.h
 )

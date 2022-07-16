@@ -1,10 +1,9 @@
 extern crate log;
 use std::time::Duration;
-use log::{debug, error, log_enabled, info, Level};
+use log::info;
 
 
 use crate::common::{CallId, CallMediaType, DeviceId, Result};
-use crate::core::platform::{Platform, PlatformItem};
 use crate::core::signaling;
 
 use crate::core::util::ptr_as_mut;
@@ -12,19 +11,19 @@ use crate::java::call_manager::JavaCallManager;
 use crate::java::java_platform::{JavaPlatform,PeerId};
 use crate::lite::http;
 
-    fn init_logging() {
-        env_logger::builder()
-            .is_test(true)
-            .filter(None, log::LevelFilter::Debug)
-            .init();
-println!("LOGINIT done");
-info!("IIIINFO");
-    }
+fn init_logging() {
+    env_logger::builder()
+        .filter(None, log::LevelFilter::Debug)
+        .init();
+    println!("LOGINIT done");
+    info!("INFO logging enabled");
+}
 
 
 #[no_mangle]
 pub unsafe extern "C" fn createCallManager() -> i64 {
-    print! ("Need to create Java call_manager\n");
+    init_logging();
+    info! ("Need to create Java call_manager\n");
     match create_java_call_manager() {
         Ok(v) => v,
         Err(_e) => {
@@ -65,11 +64,24 @@ fn create_java_call_manager() -> Result<i64> {
 }
 
 #[no_mangle]
+pub unsafe extern "C" fn set_first_callback(java_call_manager: u64, mycb: extern "C" fn(i32)) {
+    let call_manager = ptr_as_mut(java_call_manager as *mut JavaCallManager).unwrap() ;
+    let mut java_platform = call_manager.platform().unwrap();
+    java_platform.startCallback = mycb;
+    info!("javaplatform = {:?}", java_platform);
+    info!("Callback stored to {:?}", mycb);
+    info!("Current Thread = {:?}", std::thread::current().id());
+
+    mycb(3);
+    info!("Callback invoked!");
+}
+
+#[no_mangle]
 pub unsafe extern "C" fn received_offer(
     call_manager: u64,
     call_id: CallId, 
     // remote_peer: <JavaPlatform as Platform>::AppRemotePeer,
-    remote_peer: u64,
+    _remote_peer: u64,
     sender_device_id: DeviceId,
     opaque: Opaque,
     age_sec: u64,
@@ -80,7 +92,6 @@ pub unsafe extern "C" fn received_offer(
     receiver_identity_key: MyKey,
 ) -> i64 {
     println! ("Sort of received offer for callid {} and callmanager ", call_id);
-    init_logging();
     let call_manager = ptr_as_mut(call_manager as *mut JavaCallManager).unwrap() ;
     println! ("WE ALSO GOT A CALLMANAGER NOW!");
     println! ("opaquelen = {} and opaquedata = {:?}", opaque.len, opaque.data);

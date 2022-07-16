@@ -47,19 +47,36 @@ impl JavaMediaStream {
 impl PlatformItem for JavaMediaStream {
 }
 
+#[allow(non_snake_case)]
+extern "C" fn dummyStart(idx: i32) {
+    info!("Dummy start with {}", idx);
+}
+
 #[repr(C)]
+#[allow(non_snake_case)]
 pub struct JavaPlatform {
+#[allow(non_snake_case)]
+    pub startCallback: unsafe extern "C" fn(i32)
 }
 
 
 impl JavaPlatform {
     pub fn new() -> Self {
-        Self {}
+        info!("JavaPlatform created!");
+        Self {
+            startCallback : dummyStart
+        }
     }
 
     pub fn try_clone(&self) -> Result<Self> {
         Ok(Self {
+            startCallback : dummyStart
         })
+    }
+
+    #[no_mangle]
+    pub unsafe extern "C" fn setStartCallCallback(&mut self, func: unsafe extern "C" fn(i32)) {
+        self.startCallback = func;
     }
 
 }
@@ -139,6 +156,15 @@ impl Platform for JavaPlatform {
             "on_start_call(): call_id: {}, direction: {}",
             call_id, direction
         );
+        info!("Current thread = {:?}", std::thread::current().id());
+        unsafe {
+            info!("Ready to call callback");
+            info!("Ready to call callback for {:?}",self);
+            info!("Ready to call callback at {:?}",self.startCallback);
+            // myCallback(39);
+            (self.startCallback)(34);
+            info!("DID call callback");
+        }
         Ok(())
     }
 
