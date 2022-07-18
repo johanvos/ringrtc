@@ -191,6 +191,7 @@ impl OutstandingGroupRing {
 }
 
 /// When receiving an offer, the possible collisions with the active call.
+#[repr(C)]
 enum ReceivedOfferCollision {
     /// No active call, so we can proceed normally
     None,
@@ -207,6 +208,7 @@ enum ReceivedOfferCollision {
     ReCall,
 }
 
+#[repr(C)]
 pub struct CallManager<T>
 where
     T: Platform,

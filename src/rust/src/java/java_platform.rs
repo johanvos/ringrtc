@@ -32,6 +32,18 @@ impl PeerId {
 
 impl PlatformItem for PeerId {}
 
+impl fmt::Display for PeerId {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "PeerId")
+    }
+}
+
+impl fmt::Debug for PeerId {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}", self)
+    }
+}
+
 pub type JavaCallContext = String;
 pub type JavaConnection = String;
 
@@ -48,34 +60,39 @@ impl PlatformItem for JavaMediaStream {
 }
 
 #[allow(non_snake_case)]
-extern "C" fn dummyStart(idx: i32) {
-    info!("Dummy start with {}", idx);
+extern "C" fn dummyStart(call_id: CallId, remote_peer: u64, direction: CallDirection, call_media_type: CallMediaType) {
+    info!("Dummy start with {:?}", (call_id, remote_peer, direction, call_media_type));
 }
 
 #[repr(C)]
 #[allow(non_snake_case)]
 pub struct JavaPlatform {
 #[allow(non_snake_case)]
-    pub startCallback: unsafe extern "C" fn(i32)
+    pub startCallback: unsafe extern "C" fn(call_id: CallId,
+                                            remote_peer: u64,
+                                            direction: CallDirection,
+                                            call_media_type: CallMediaType),
+    pub bogusVal: i32
 }
-
 
 impl JavaPlatform {
     pub fn new() -> Self {
         info!("JavaPlatform created!");
         Self {
-            startCallback : dummyStart
+            startCallback : dummyStart,
+            bogusVal: 12
         }
     }
 
     pub fn try_clone(&self) -> Result<Self> {
         Ok(Self {
-            startCallback : dummyStart
+            startCallback : self.startCallback,
+            bogusVal: 15
         })
     }
 
     #[no_mangle]
-    pub unsafe extern "C" fn setStartCallCallback(&mut self, func: unsafe extern "C" fn(i32)) {
+    pub unsafe extern "C" fn setStartCallCallback(&mut self, func: unsafe extern "C" fn(CallId, u64, CallDirection, CallMediaType)) {
         self.startCallback = func;
     }
 
@@ -87,17 +104,6 @@ impl http::Delegate for JavaPlatform {
         // if let Err(err) = self.send_http_request(request_id, request) {
        // error!("JavaPlatform.send_http_request failed: {:?}", err);
         // }
-    }
-}
-impl fmt::Display for PeerId {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "PeerId")
-    }
-}
-
-impl fmt::Debug for PeerId {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}", self)
     }
 }
 
@@ -147,22 +153,24 @@ impl Platform for JavaPlatform {
 
     fn on_start_call(
         &self,
-        _remote_peer: &Self::AppRemotePeer,
+        remote_peer: &Self::AppRemotePeer,
         call_id: CallId, 
         direction: CallDirection,
-        _call_media_type: CallMediaType,
+        call_media_type: CallMediaType,
     ) -> Result<()> {
         info!(
-            "on_start_call(): call_id: {}, direction: {}",
+            "on_start_call(): call_id: {:?}, direction: {}",
             call_id, direction
         );
         info!("Current thread = {:?}", std::thread::current().id());
         unsafe {
             info!("Ready to call callback");
             info!("Ready to call callback for {:?}",self);
-            info!("Ready to call callback at {:?}",self.startCallback);
+            info!("Ready to call callback for {}",self.bogusVal);
+            // info!("Ready to call callback at {:?}",self.startCallback);
             // myCallback(39);
-            (self.startCallback)(34);
+            let pid : u64= remote_peer.address;
+            (self.startCallback)(call_id, pid, direction, call_media_type);
             info!("DID call callback");
         }
         Ok(())

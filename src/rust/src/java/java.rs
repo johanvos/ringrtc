@@ -2,11 +2,11 @@ extern crate log;
 use std::time::Duration;
 use log::info;
 
-
-use crate::common::{CallId, CallMediaType, DeviceId, Result};
+use crate::common::{CallDirection, CallId, CallMediaType, DeviceId, Result};
 use crate::core::signaling;
 
-use crate::core::util::ptr_as_mut;
+use crate::core::platform::{Platform};
+use crate::core::util::{ptr_as_mut, ptr_as_box};
 use crate::java::call_manager::JavaCallManager;
 use crate::java::java_platform::{JavaPlatform,PeerId};
 use crate::lite::http;
@@ -21,10 +21,17 @@ fn init_logging() {
 
 
 #[no_mangle]
-pub unsafe extern "C" fn createCallManager() -> i64 {
+// pub unsafe extern "C" fn exportJavaStuff(_cm: CallManager<JavaPlatform>) -> i64 {
+pub unsafe extern "C" fn exportJavaStuff() -> i64 {
+    0
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn createCallManager(pm: u64) -> i64 {
     init_logging();
-    info! ("Need to create Java call_manager\n");
-    match create_java_call_manager() {
+    info! ("Need to create Java call_manager, pm at {}\n", pm);
+    let platform = ptr_as_box(pm as *mut JavaPlatform).unwrap() ;
+    match create_java_call_manager(*platform) {
         Ok(v) => v,
         Err(_e) => {
             println! ("Error creating Java CallManager");
@@ -55,25 +62,38 @@ pub unsafe extern "C" fn dribbeldedribbel() {
     println! ("Got offer with some bytes!")
 }
 
-fn create_java_call_manager() -> Result<i64> {
+#[no_mangle]
+pub unsafe extern "C" fn createJavaPlatform() -> u64 {
     let platform = JavaPlatform::new();
+    let platform_box = Box::new(platform);
+    Box::into_raw(platform_box) as u64
+}
+
+// #[no_mangle]
+// pub unsafe extern "C" fn getJavaPlatform(java_call_manager: u64) -> Result<JavaPlatform> {
+    // let call_manager = ptr_as_mut(java_call_manager as *mut JavaCallManager).unwrap() ;
+    // let java_platform = call_manager.platform().unwrap();
+    // Ok(java_platform)
+// }
+
+fn create_java_call_manager(platform: JavaPlatform) -> Result<i64> {
+    // let platform = JavaPlatform::new();
     let http_client = http::DelegatingClient::new(platform.try_clone()?);
     let call_manager = JavaCallManager::new(platform, http_client)?;
+    info!("Created cm, platform = {:?}", call_manager.platform());
     let call_manager_box = Box::new(call_manager);
     Ok(Box::into_raw(call_manager_box) as i64)
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn set_first_callback(java_call_manager: u64, mycb: extern "C" fn(i32)) {
+pub unsafe extern "C" fn set_first_callback(java_call_manager: u64, mycb: extern "C" fn(CallId, u64, CallDirection, CallMediaType)) {
     let call_manager = ptr_as_mut(java_call_manager as *mut JavaCallManager).unwrap() ;
     let mut java_platform = call_manager.platform().unwrap();
+    // info!("Callback was to {:?}", java_platform.startCallback);
     java_platform.startCallback = mycb;
     info!("javaplatform = {:?}", java_platform);
-    info!("Callback stored to {:?}", mycb);
+    // info!("Callback stored to {:?}", mycb);
     info!("Current Thread = {:?}", std::thread::current().id());
-
-    mycb(3);
-    info!("Callback invoked!");
 }
 
 #[no_mangle]
