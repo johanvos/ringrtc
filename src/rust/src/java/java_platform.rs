@@ -148,6 +148,10 @@ impl Platform for JavaPlatform {
             None,
         )?;
 
+        let connection_ptr = connection.get_connection_ptr()?;
+        info!("Connection_ptr = {:?}", connection_ptr);
+        info!("TODO: Create Connection in Java layer (similar to Android CallManager.createConnection)");
+
         Ok(connection)
     }
 
