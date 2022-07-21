@@ -830,6 +830,7 @@ where
     ///
     /// Using the `EventPump` send a CallEvent to the internal FSM.
     fn inject_event(&mut self, event: CallEvent) -> Result<()> {
+info!("Inject event, fsm_sender = {:?}", self.fsm_sender);
         if self.fsm_sender.is_closed() {
             // The stream is closed, just eat the request
             debug!(

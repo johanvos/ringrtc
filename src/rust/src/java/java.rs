@@ -123,8 +123,8 @@ pub unsafe extern "C" fn received_offer(
     let call_manager = ptr_as_mut(call_manager as *mut JavaCallManager).unwrap() ;
     println! ("WE ALSO GOT A CALLMANAGER NOW!");
     println! ("opaquelen = {} and opaquedata = {:?}", opaque.len, opaque.data);
-    let  mv = toVector(opaque.rawdata, opaque.len);
-    println! ("opaqueraw = {:?}, vec = {:?} ", opaque.rawdata, mv);
+    // let  mv = toVector(opaque.rawdata, opaque.len);
+    // println! ("opaqueraw = {:?}, vec = {:?} ", opaque.rawdata, mv);
     // let sender_identity_key = sender_identity_key.data.to_vec();
     println! ("sik0 = {}, sik = {:?}", sender_identity_key.data[0], sender_identity_key.data);
     let receiver_identity_key = receiver_identity_key.data.to_vec();
@@ -168,7 +168,7 @@ pub unsafe extern "C" fn proceed(
 
 #[no_mangle]
 pub unsafe extern "C" fn received_ice(call_manager: u64, call_id: u64, sender_device_id: DeviceId, icepack: IcePack) {
-    info!("JavaRing, received_ice");
+    info!("JavaRing, received_ice with length = {}", icepack.length );
     let call_manager = ptr_as_mut(call_manager as *mut JavaCallManager).unwrap() ;
     let call_id = CallId::from(call_id);
     let mut ice_candidates = Vec::new();
