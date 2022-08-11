@@ -1,5 +1,6 @@
 use std::collections::HashSet;
 use std::fmt;
+use std::sync::Arc;
 use std::time::Duration;
 use crate::common::{ApplicationEvent, CallDirection, CallId, CallMediaType, DeviceId, Result};
 use crate::core::bandwidth_mode::BandwidthMode;
@@ -12,9 +13,14 @@ use crate::lite::{
     sfu::{DemuxId, PeekInfo, PeekResult, UserId},
 };
 
+use crate::webrtc;
+use crate::webrtc::peer_connection::PeerConnection;
+use crate::webrtc::peer_connection;
 use crate::webrtc::media::{MediaStream, VideoTrack};
 use crate::webrtc::peer_connection::{AudioLevel, ReceivedAudioLevel};
 use crate::webrtc::peer_connection_observer::NetworkRoute;
+use crate::webrtc::peer_connection::RffiPeerConnection;
+
 
 #[derive(Clone)]
 #[repr(C)]
@@ -44,8 +50,46 @@ impl fmt::Debug for PeerId {
     }
 }
 
+struct JavaConnection {
+    platform: JavaPlatform,
+    /// Java Connection object.
+    jni_connection: u64,
+}
+
+
+
+
+#[derive(Clone)]
+pub struct JDKConnection {
+    inner: Arc<JavaConnection>,
+}
+
+unsafe impl Sync for JDKConnection {}
+unsafe impl Send for JDKConnection {}
+impl PlatformItem for JDKConnection {}
+
+impl JDKConnection {
+    fn new(platform: JavaPlatform, jni_connection: u64) -> Self {
+        Self {
+            inner: Arc::new(JavaConnection {
+                platform,
+                jni_connection,
+            }),
+        }
+    }
+
+    pub fn to_jni(&self) -> u64 {
+        self.inner.jni_connection.clone()
+    }
+}
+
+
+extern "C" {
+    pub fn Rust_borrowPeerConnectionFromJniOwnedPeerConnection(
+        jni_owned_pc: i64,
+    ) -> webrtc::ptr::BorrowedRc<RffiPeerConnection>;
+}
 pub type JavaCallContext = String;
-pub type JavaConnection = String;
 
 pub struct JavaMediaStream {
 }
@@ -64,6 +108,12 @@ extern "C" fn dummyStart(call_id: CallId, remote_peer: u64, direction: CallDirec
     info!("Dummy start with {:?}", (call_id, remote_peer, direction, call_media_type));
 }
 
+#[allow(non_snake_case)]
+extern "C" fn dummyCreateConnection(call_id: CallId) -> i64 {
+    info!("Dummy createConnection for {:?}", call_id);
+    123456
+}
+
 #[repr(C)]
 #[allow(non_snake_case)]
 pub struct JavaPlatform {
@@ -72,6 +122,7 @@ pub struct JavaPlatform {
                                             remote_peer: u64,
                                             direction: CallDirection,
                                             call_media_type: CallMediaType),
+    pub createConnectionCallback: unsafe extern "C" fn(call_id: CallId) -> i64,
     pub bogusVal: i32
 }
 
@@ -80,6 +131,7 @@ impl JavaPlatform {
         info!("JavaPlatform created!");
         Self {
             startCallback : dummyStart,
+            createConnectionCallback : dummyCreateConnection,
             bogusVal: 12
         }
     }
@@ -87,6 +139,7 @@ impl JavaPlatform {
     pub fn try_clone(&self) -> Result<Self> {
         Ok(Self {
             startCallback : self.startCallback,
+            createConnectionCallback : dummyCreateConnection,
             bogusVal: 15
         })
     }
@@ -110,7 +163,7 @@ impl http::Delegate for JavaPlatform {
 impl Platform for JavaPlatform {
     type AppRemotePeer = PeerId; 
     type AppCallContext = JavaCallContext;
-    type AppConnection = JavaConnection;
+    type AppConnection = JDKConnection;
     type AppIncomingMedia = JavaMediaStream;
 
     fn compare_remotes(
@@ -150,7 +203,34 @@ impl Platform for JavaPlatform {
 
         let connection_ptr = connection.get_connection_ptr()?;
         info!("Connection_ptr = {:?}", connection_ptr);
+        let call_id = call.call_id();
         info!("TODO: Create Connection in Java layer (similar to Android CallManager.createConnection)");
+        let java_owned_pc = unsafe {
+            (self.createConnectionCallback)(call_id)
+        };
+        info!("DID call cccallback");
+/*
+        let rffi_peer_connection = unsafe {
+              webrtc::Arc::from_borrowed(webrtc::ptr::BorrowedRc::from_ptr(
+                  java_owned_pc as *const peer_connection::RffiPeerConnection
+              ) )
+        };
+        info!("We have rffi pc at {:?}", rffi_peer_connection);
+        if rffi_peer_connection.is_null() {
+            info!("NULL PEER CONNECTION!");
+        }
+
+        // Note: We have to make sure the PeerConnectionFactory outlives this PC because we're not getting
+        // any help from the type system when passing in a None for the PeerConnectionFactory here.
+        let peer_connection = PeerConnection::new(rffi_peer_connection, None, None);
+        info!("We have pc at {:?}", peer_connection);
+
+        connection.set_peer_connection(peer_connection)?;
+
+        info!("connection: {:?}", connection);
+
+        info!("Done with create_connection!");
+*/
 
         Ok(connection)
     }
@@ -426,5 +506,7 @@ impl sfu::Delegate for JavaPlatform {
     fn handle_peek_result(&self, _request_id: u32, _peek_result: PeekResult) {
         info!("JavaPlatform::NYIhandle_peek_result(): id: {}", _request_id);
     }
+
+
 
 }

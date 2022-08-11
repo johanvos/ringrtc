@@ -105,6 +105,14 @@ pub unsafe extern "C" fn set_first_callback(java_call_manager: u64, mycb: extern
 }
 
 #[no_mangle]
+pub unsafe extern "C" fn set_create_connection_callback(java_call_manager: u64, mycb: extern "C" fn(CallId) ->i64 ) {
+    let call_manager = ptr_as_mut(java_call_manager as *mut JavaCallManager).unwrap() ;
+    let mut java_platform = call_manager.platform().unwrap();
+    java_platform.createConnectionCallback = mycb;
+    info!("Created connection_callback javaplatform = {:?}", java_platform);
+}
+
+#[no_mangle]
 pub unsafe extern "C" fn received_offer(
     call_manager: u64,
     call_id: CallId, 
