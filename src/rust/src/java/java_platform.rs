@@ -109,7 +109,7 @@ extern "C" fn dummyStart(call_id: CallId, remote_peer: u64, direction: CallDirec
 }
 
 #[allow(non_snake_case)]
-extern "C" fn dummyCreateConnection(call_id: CallId) -> i64 {
+extern "C" fn dummyCreateConnection(_ptr: u64, call_id: CallId) -> i64 {
     info!("Dummy createConnection for {:?}", call_id);
     123456
 }
@@ -122,7 +122,7 @@ pub struct JavaPlatform {
                                             remote_peer: u64,
                                             direction: CallDirection,
                                             call_media_type: CallMediaType),
-    pub createConnectionCallback: unsafe extern "C" fn(call_id: CallId) -> i64,
+    pub createConnectionCallback: unsafe extern "C" fn(connection_ptr: u64, call_id: CallId) -> i64,
     pub bogusVal: i32
 }
 
@@ -206,7 +206,7 @@ impl Platform for JavaPlatform {
         let call_id = call.call_id();
         info!("TODO: Create Connection in Java layer (similar to Android CallManager.createConnection)");
         let java_owned_pc = unsafe {
-            (self.createConnectionCallback)(call_id)
+            (self.createConnectionCallback)(connection_ptr.as_ptr() as u64, call_id)
         };
         info!("DID call cccallback");
 /*
