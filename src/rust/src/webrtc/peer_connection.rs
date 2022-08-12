@@ -136,6 +136,8 @@ impl PeerConnection {
         // Rust_setRemoteDescription takes ownership of the local description
         // We take out the interface (with take_rffi) so that when the SessionDescriptionInterface
         // is deleted, we don't double delete.
+info!("[JV] PC, set_remote_description asked");
+info!("[JV] PC, set_remote_description asked, will invoke on {:?}", self.rffi);
         unsafe {
             pc::Rust_setRemoteDescription(
                 self.rffi.as_borrowed(),
@@ -143,6 +145,7 @@ impl PeerConnection {
                 session_description.take_rffi().into_owned(),
             )
         };
+info!("[JV] PC, set_remote_description done");
     }
 
     /// Does something like:

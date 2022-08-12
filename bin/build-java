@@ -111,10 +111,11 @@ export MACOSX_DEPLOYMENT_TARGET="10.10"
         # TODO: Figure out why and fix this
         rm -f target/debug/deps/libringrtc.rlib
 
-        echo "running RUST_LOG=debug OUTPUT_DIR=${OUTPUT_DIR} cargo build --lib --features=native,java"
+        echo "running RUST_LOG=debug OUTPUT_DIR=${OUTPUT_DIR} cargo build --lib --features=java"
         #cargo clean
-        RUST_LOG=debug RUST_BACKTRACE=1 OUTPUT_DIR="${OUTPUT_DIR}" cargo build
-        RUST_LOG=debug RUST_BACKTRACE=1 OUTPUT_DIR="${OUTPUT_DIR}" cargo build --lib --features=native,java
+        RUSTFLAGS=-g RUST_LOG=debug RUST_BACKTRACE=1 OUTPUT_DIR="${OUTPUT_DIR}" cargo build
+        RUSTFLAGS=-g RUST_LOG=debug RUST_BACKTRACE=1 OUTPUT_DIR="${OUTPUT_DIR}" cargo build --lib --features=native,java
+        #RUSTFLAGS=-g RUST_LOG=debug RUST_BACKTRACE=1 OUTPUT_DIR="${OUTPUT_DIR}" cargo build --lib --features=java
         echo "Created src/rust/target/debug/libringrtc.so"
     else
         # HACK: IF we don't remove this file, changes to rffi code will not make it into the binary.

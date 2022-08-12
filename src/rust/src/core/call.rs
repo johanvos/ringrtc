@@ -581,8 +581,10 @@ where
                         bandwidth_mode,
                         audio_levels_interval,
                     )?;
+                    info!("[JV] proceed(): connection created: {:?}", connection);
                     let answer = connection
                         .start_incoming(pending_call.received, pending_call.ice_candidates)?;
+                    info!("[JV] proceed(): answer created");
                     call_manager.send_answer(
                         self.clone(),
                         connection.clone(),
@@ -591,6 +593,7 @@ where
                             answer,
                         },
                     )?;
+                    info!("[JV] proceed(): answer sent");
 
                     let mut connection_map = self.connection_map.lock()?;
                     connection_map.insert(remote_device_id, connection);

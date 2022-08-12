@@ -8,10 +8,16 @@ use crate::common::{CallDirection, CallId, CallMediaType, DeviceId, Result};
 use crate::core::signaling;
 
 use crate::core::bandwidth_mode::BandwidthMode;
+use crate::core::connection::Connection;
 use crate::core::util::{ptr_as_mut, ptr_as_box};
+use crate::error::RingRtcError;
 use crate::java::call_manager::JavaCallManager;
 use crate::java::java_platform::{JavaPlatform,PeerId};
 use crate::lite::http;
+use crate::webrtc;
+use crate::webrtc::peer_connection_observer::PeerConnectionObserver;
+use crate::webrtc::peer_connection::{PeerConnection,RffiPeerConnection};
+
 
 fn init_logging() {
     env_logger::builder()
@@ -133,6 +139,7 @@ pub unsafe extern "C" fn received_offer(
              call_id,
              received_offer);
     println!("RESULT of received_offer = {:?}", result);
+    info!("RESULT of received_offer = {:?}", result);
     16
 }
 
@@ -152,6 +159,54 @@ pub unsafe extern "C" fn proceed(
     call_manager.proceed(call_id, context, bandwidth_mode, audio_levels_interval);
 }
 
+#[no_mangle]
+pub unsafe extern "C" fn createPeerConnection(
+    peer_connection_factory: i64, native_connection_borrowed: i64) -> i64 {
+    info!("createPeerConnection, fact = {} and conn = {}", peer_connection_factory, native_connection_borrowed);
+    let my_native_connection = webrtc::ptr::Borrowed::from_ptr(
+            native_connection_borrowed as *mut Connection<JavaPlatform>,
+     );
+
+    match create_peer_connection(peer_connection_factory, my_native_connection) {
+        Ok(v) => v,
+        Err(e) => {
+            info!("ERROR creating peerConnection, return 0 to java layer");
+            0
+        }
+    }
+}
+
+pub fn create_peer_connection(
+    peer_connection_factory: i64, native_connection: webrtc::ptr::Borrowed<Connection<JavaPlatform>>
+) -> Result<i64> {
+    info!("JavaRing, createPeerConnection called, fact = {} ", peer_connection_factory);
+    info!("JavaRing, conn = {:?}", native_connection);
+        let connection = unsafe { native_connection.as_mut() }.ok_or_else(|| {
+        RingRtcError::NullPointer(
+            "create_peer_connection".to_owned(),
+            "native_connection".to_owned(),
+        )
+    })?;
+    info!("JavaRing, got conn = {:?}", connection);
+    // native_connection is an un-boxed Connection<JavaPlatform> on the heap.
+    // pass ownership of it to the PeerConnectionObserver.
+    let pc_observer = PeerConnectionObserver::new(
+        native_connection,
+        false, /* enable_frame_encryption */
+        false, /* enable_video_frame_event */
+    )?;
+    let rffi_pc = unsafe {
+        webrtc::Arc::from_borrowed(webrtc::ptr::BorrowedRc::from_ptr(
+            peer_connection_factory as *const RffiPeerConnection,
+        ))
+    };
+
+    let peer_connection = PeerConnection::new(rffi_pc, None, None);
+
+    connection.set_peer_connection(peer_connection)?;
+    info!("connection: {:?}", connection);
+    Ok(1)
+}
 #[no_mangle]
 pub unsafe extern "C" fn received_ice(call_manager: u64, call_id: u64, sender_device_id: DeviceId, icepack: IcePack) {
     info!("JavaRing, received_ice with length = {}", icepack.length );

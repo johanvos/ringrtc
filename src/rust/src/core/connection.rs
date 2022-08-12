@@ -707,6 +707,7 @@ where
         remote_ice_candidates: Vec<signaling::IceCandidate>,
     ) -> Result<signaling::Answer> {
         let result = (|| {
+info!("[JV] conn.start_incoming0");
             self.set_state(ConnectionState::Starting)?;
 
             // We need to always take the locks in this order. See reconfigure_send_bandwidth.
@@ -718,6 +719,7 @@ where
             webrtc.stats_observer = Some(stats_observer);
 
             let peer_connection = webrtc.peer_connection()?;
+info!("[JV] conn.start_incoming1, peer_connection = {:?}", peer_connection);
 
             // Don't enable audio flow until the call is accepted.
             peer_connection.set_audio_recording_enabled(false);
@@ -740,7 +742,9 @@ where
                 return Err(RingRtcError::UnknownSignaledProtocolVersion.into());
             };
 
+info!("[JV] conn.start_incoming3, offer = {:?}", offer);
             let (local_secret, local_public_key) = generate_local_secret_and_public_key()?;
+info!("[JV] conn.start_incoming4");
             let answer_key = match remote_public_key {
                 None => None,
                 Some(remote_public_key) => {
@@ -759,9 +763,12 @@ where
                     Some(answer_key)
                 }
             };
+info!("[JV] conn.start_incoming5");
 
             let observer = create_ssd_observer();
+info!("[JV] conn.start_incoming6");
             peer_connection.set_remote_description(observer.as_ref(), offer);
+info!("[JV] conn.start_incoming7");
             // on_add_stream can happen while SetRemoteDescription
             // is happening.  But they won't be processed until start_fsm() is called
             // below.
@@ -773,6 +780,7 @@ where
             if let Some(answer_key) = &answer_key {
                 answer.disable_dtls_and_set_srtp_key(answer_key)?;
             }
+info!("[JV] conn.start_incoming72");
 
             let answer_to_send = if v4_offer.is_some() {
                 let v4_answer = answer.to_v4(
@@ -795,6 +803,7 @@ where
             } else {
                 return Err(RingRtcError::UnknownSignaledProtocolVersion.into());
             };
+info!("[JV] conn.start_incoming79");
 
             // Don't enable incoming RTP until accepted.
             // This should be done before we set local description to make sure
@@ -831,6 +840,7 @@ where
             self.add_and_remove_remote_ice_candidates(peer_connection, &remote_ice_candidates)?;
 
             self.set_state(ConnectionState::ConnectingBeforeAccepted)?;
+info!("[JV] conn.start_incoming89");
             Ok(answer_to_send)
         })();
 
@@ -840,6 +850,7 @@ where
         // Always start the FSM no matter what happened above because
         // close() relies on it running.
         self.start_fsm()?;
+info!("[JV] conn.start_incoming99");
         result
     }
 
@@ -912,6 +923,7 @@ where
 
     /// Update the PeerConnection.
     pub fn set_peer_connection(&self, peer_connection: PeerConnection) -> Result<()> {
+        info!("[JV] setPeerConnection!");
         let mut webrtc = self.webrtc.lock()?;
         webrtc.peer_connection = Some(peer_connection);
         Ok(())

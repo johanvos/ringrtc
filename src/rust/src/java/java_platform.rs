@@ -53,11 +53,8 @@ impl fmt::Debug for PeerId {
 struct JavaConnection {
     platform: JavaPlatform,
     /// Java Connection object.
-    jni_connection: u64,
+    jni_connection: i64,
 }
-
-
-
 
 #[derive(Clone)]
 pub struct JDKConnection {
@@ -69,7 +66,7 @@ unsafe impl Send for JDKConnection {}
 impl PlatformItem for JDKConnection {}
 
 impl JDKConnection {
-    fn new(platform: JavaPlatform, jni_connection: u64) -> Self {
+    fn new(platform: JavaPlatform, jni_connection: i64) -> Self {
         Self {
             inner: Arc::new(JavaConnection {
                 platform,
@@ -78,7 +75,7 @@ impl JDKConnection {
         }
     }
 
-    pub fn to_jni(&self) -> u64 {
+    pub fn to_jni(&self) -> i64 {
         self.inner.jni_connection.clone()
     }
 }
@@ -208,7 +205,10 @@ impl Platform for JavaPlatform {
         let java_owned_pc = unsafe {
             (self.createConnectionCallback)(connection_ptr.as_ptr() as u64, call_id)
         };
-        info!("DID call cccallback");
+        info!("DID callback to Java to create connection pointer");
+        info!("DID call cccallback, java_owned_pc = {:?}", java_owned_pc);
+        let platform = self.try_clone()?;
+        let jdk_connection = JDKConnection::new(platform, java_owned_pc);
 /*
         let rffi_peer_connection = unsafe {
               webrtc::Arc::from_borrowed(webrtc::ptr::BorrowedRc::from_ptr(
@@ -229,8 +229,8 @@ impl Platform for JavaPlatform {
 
         info!("connection: {:?}", connection);
 
-        info!("Done with create_connection!");
 */
+        info!("Done with create_connection!");
 
         Ok(connection)
     }
