@@ -1,6 +1,7 @@
 extern crate log;
 use core::slice;
 use std::time::Duration;
+use std::ptr::null;
 use log::info;
 
 use crate::common::{CallDirection, CallId, CallMediaType, DeviceId, Result};
@@ -21,25 +22,6 @@ fn init_logging() {
 }
 
 
-#[no_mangle]
-// pub unsafe extern "C" fn exportJavaStuff(_cm: CallManager<JavaPlatform>) -> i64 {
-pub unsafe extern "C" fn exportJavaStuff() -> i64 {
-    0
-}
-
-#[no_mangle]
-pub unsafe extern "C" fn createCallManager(pm: u64) -> i64 {
-    init_logging();
-    info! ("Need to create Java call_manager, pm at {}\n", pm);
-    let platform = ptr_as_box(pm as *mut JavaPlatform).unwrap() ;
-    match create_java_call_manager(*platform) {
-        Ok(v) => v,
-        Err(_e) => {
-            println! ("Error creating Java CallManager");
-            0
-        }
-    }
-}
 
 #[repr(C)]
 pub struct MyKey {
@@ -60,37 +42,33 @@ pub struct IcePack {
 }
 
 #[no_mangle]
-// pub unsafe extern "C" fn offerFromAppReceived(_opaque: Vec<u8>) {
-pub unsafe extern "C" fn offerFromAppReceived() {
-    println! ("Got offer with some bytes!")
-}
-
-#[no_mangle]
-pub unsafe extern "C" fn dribbeldedribbel() {
-    println! ("Got offer with some bytes!")
-}
-
-#[no_mangle]
-pub unsafe extern "C" fn createJavaPlatform() -> u64 {
+pub unsafe extern "C" fn createJavaPlatform() -> *mut JavaPlatform {
+    init_logging();
     let platform = JavaPlatform::new();
     let platform_box = Box::new(platform);
-    Box::into_raw(platform_box) as u64
+    Box::into_raw(platform_box)
 }
 
-// #[no_mangle]
-// pub unsafe extern "C" fn getJavaPlatform(java_call_manager: u64) -> Result<JavaPlatform> {
-    // let call_manager = ptr_as_mut(java_call_manager as *mut JavaCallManager).unwrap() ;
-    // let java_platform = call_manager.platform().unwrap();
-    // Ok(java_platform)
-// }
+#[no_mangle]
+pub unsafe extern "C" fn createCallManager(pm: u64) -> i64 {
+    info! ("Need to create Java call_manager, pm at {}\n", pm);
+    let platform = ptr_as_box(pm as *mut JavaPlatform).unwrap() ;
+    match create_java_call_manager(*platform) {
+        Ok(v) => v as i64,
+        Err(_e) => {
+            println! ("Error creating Java CallManager");
+            0
+        }
+    }
+}
 
-fn create_java_call_manager(platform: JavaPlatform) -> Result<i64> {
+fn create_java_call_manager(platform: JavaPlatform) -> Result<*mut JavaCallManager> {
     // let platform = JavaPlatform::new();
     let http_client = http::DelegatingClient::new(platform.try_clone()?);
     let call_manager = JavaCallManager::new(platform, http_client)?;
     info!("Created cm, platform = {:?}", call_manager.platform());
     let call_manager_box = Box::new(call_manager);
-    Ok(Box::into_raw(call_manager_box) as i64)
+    Ok(Box::into_raw(call_manager_box) )
 }
 
 #[no_mangle]
