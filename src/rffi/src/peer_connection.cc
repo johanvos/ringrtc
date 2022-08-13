@@ -743,6 +743,7 @@ RUSTEXPORT void
 Rust_setRemoteDescription(PeerConnectionInterface*           peer_connection_borrowed_rc,
                           SetSessionDescriptionObserverRffi* ssd_observer_borrowed_rc,
                           SessionDescriptionInterface*       description_owned) {
+  fprintf(stderr, "Will set remotescrtion for %p with desc %p and observer %p\n", peer_connection_borrowed_rc,ssd_observer_borrowed_rc,description_owned);
   peer_connection_borrowed_rc->SetRemoteDescription(ssd_observer_borrowed_rc, description_owned);
 }
 
@@ -779,7 +780,9 @@ RUSTEXPORT void
 Rust_setAudioPlayoutEnabled(webrtc::PeerConnectionInterface* peer_connection_borrowed_rc,
                             bool                             enabled) {
   RTC_LOG(LS_INFO) << "Rust_setAudioPlayoutEnabled(" << enabled << ")";
+  fprintf(stderr, "Will set audio for %p\n ", peer_connection_borrowed_rc);
   peer_connection_borrowed_rc->SetAudioPlayout(enabled);
+  fprintf(stderr, "Did set audio for %p\n ", peer_connection_borrowed_rc);
 }
 
 RUSTEXPORT void

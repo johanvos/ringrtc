@@ -767,6 +767,8 @@ info!("[JV] conn.start_incoming5");
 
             let observer = create_ssd_observer();
 info!("[JV] conn.start_incoming6");
+info!("[JV] conn.start_incoming, process observer: {:?}", observer);
+info!("[JV] conn.start_incoming, process offer: {:?}", offer);
             peer_connection.set_remote_description(observer.as_ref(), offer);
 info!("[JV] conn.start_incoming7");
             // on_add_stream can happen while SetRemoteDescription

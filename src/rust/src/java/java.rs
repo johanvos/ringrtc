@@ -1,7 +1,6 @@
 extern crate log;
 use core::slice;
 use std::time::Duration;
-use std::ptr::null;
 use log::info;
 
 use crate::common::{CallDirection, CallId, CallMediaType, DeviceId, Result};
@@ -18,7 +17,6 @@ use crate::webrtc;
 use crate::webrtc::peer_connection_observer::PeerConnectionObserver;
 use crate::webrtc::peer_connection::{PeerConnection,RffiPeerConnection};
 
-
 fn init_logging() {
     env_logger::builder()
         .filter(None, log::LevelFilter::Debug)
@@ -26,8 +24,6 @@ fn init_logging() {
     println!("LOGINIT done");
     info!("INFO logging enabled");
 }
-
-
 
 #[repr(C)]
 pub struct MyKey {
@@ -111,13 +107,9 @@ pub unsafe extern "C" fn received_offer(
     sender_identity_key: MyKey,
     receiver_identity_key: MyKey,
 ) -> i64 {
-    println! ("Sort of received offer for callid {} and callmanager ", call_id);
     let call_manager = ptr_as_mut(call_manager as *mut JavaCallManager).unwrap() ;
-    println! ("WE ALSO GOT A CALLMANAGER NOW!");
+    info! ("received offer for callid {} and callmanager {:?}", call_id, call_manager);
     println! ("opaquelen = {} and opaquedata = {:?}", opaque.len, opaque.data);
-    // let  mv = toVector(opaque.rawdata, opaque.len);
-    // println! ("opaqueraw = {:?}, vec = {:?} ", opaque.rawdata, mv);
-    // let sender_identity_key = sender_identity_key.data.to_vec();
     println! ("sik0 = {}, sik = {:?}", sender_identity_key.data[0], sender_identity_key.data);
     let receiver_identity_key = receiver_identity_key.data.to_vec();
     let sender_identity_key = sender_identity_key.data.to_vec();
@@ -138,7 +130,6 @@ pub unsafe extern "C" fn received_offer(
              myremote_peer,
              call_id,
              received_offer);
-    println!("RESULT of received_offer = {:?}", result);
     info!("RESULT of received_offer = {:?}", result);
     16
 }
@@ -241,53 +232,4 @@ pub struct byte_array {
 pub struct byte_array_2d {
     rows: [byte_array;10],
     length: usize
-}
-
-#[no_mangle]
-pub unsafe extern "C" fn gotMyVectors2d(ba: byte_array_2d) {
-    // let byte_arrays = slice::from_raw_parts(ba.bytes, ba.length);
-    let size = ba.length;
-    for i in 0..size {
-        let raw = &ba.rows[i];
-        println!("raw bytes: {:?}", raw);
-    }
-    // let vector: Vec<byte_array> = Vec::from(byte_arrays);
-    let vector: Vec<byte_array> = Vec::from(ba.rows);
-    println! ("Got vectors from Java layer: {:?}\n", vector);
-}
-
-/*
-#[no_mangle]
-pub unsafe extern "C" fn gotMyVectorsb(ba: &mut [byte_array]) {
-    let size = ba.len();
-    for i in 0..size {
-        let my_array = &ba[i];
-        let byte_arrays = slice::from_raw_parts(my_array.bytes, my_array.length);
-    let vector: Vec<u8> = Vec::from(byte_arrays);
-    println! ("Got vectors from Java layer: {:?}\n", vector);
-    }
-}
-*/
-
-#[no_mangle]
-pub unsafe extern "C" fn gotMyVectors(ba: byte_array) {
-    let bytes = slice::from_raw_parts(ba.bytes, ba.length);
-    let vector: Vec<u8> = Vec::from(bytes);
-    println! ("Got vector from Java layer: {:?}\n", vector);
-}
-
-#[no_mangle]
-pub unsafe extern "C" fn gotMyVector(bytes: *const u8, bytes_length: usize) {
-    let bytes = slice::from_raw_parts(bytes, bytes_length);
-    let vector: Vec<u8> = Vec::from(bytes);
-    println! ("Got vector from Java layer: {:?}\n", vector);
-}
-
-#[no_mangle]
-pub unsafe extern "C" fn gotMyOffer() {
-    print! ("Got offer from Java layer!\n");
-}
-
-unsafe fn toVector(raw: *const u8, len: usize) -> Vec<u8> {
-    Vec::from(slice::from_raw_parts(raw, len))
 }

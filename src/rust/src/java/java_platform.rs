@@ -14,41 +14,12 @@ use crate::lite::{
 };
 
 use crate::webrtc;
-use crate::webrtc::peer_connection::PeerConnection;
-use crate::webrtc::peer_connection;
 use crate::webrtc::media::{MediaStream, VideoTrack};
 use crate::webrtc::peer_connection::{AudioLevel, ReceivedAudioLevel};
-use crate::webrtc::peer_connection_observer::NetworkRoute;
+use crate::webrtc::peer_connection_observer::{NetworkRoute, PeerConnectionObserver};
 use crate::webrtc::peer_connection::RffiPeerConnection;
 
-
-#[derive(Clone)]
-#[repr(C)]
-pub struct PeerId {
-    pub address: u64
-}
-
-impl PeerId {
-    pub fn new() -> Self {
-        Self {
-            address: 0
-        }
-    }
-}
-
-impl PlatformItem for PeerId {}
-
-impl fmt::Display for PeerId {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "PeerId")
-    }
-}
-
-impl fmt::Debug for PeerId {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}", self)
-    }
-}
+pub type PeerId = String;
 
 struct JavaConnection {
     platform: JavaPlatform,
@@ -173,7 +144,7 @@ impl Platform for JavaPlatform {
             remote_peer1, remote_peer2
         );
 
-        Ok(remote_peer1.address == remote_peer2.address)
+        Ok(remote_peer1 == remote_peer2)
     }
 
     fn create_connection(
@@ -197,40 +168,38 @@ impl Platform for JavaPlatform {
             audio_levels_interval,
             None,
         )?;
-
-        let connection_ptr = connection.get_connection_ptr()?;
-        info!("Connection_ptr = {:?}", connection_ptr);
-        let call_id = call.call_id();
-        info!("TODO: Create Connection in Java layer (similar to Android CallManager.createConnection)");
-        let java_owned_pc = unsafe {
-            (self.createConnectionCallback)(connection_ptr.as_ptr() as u64, call_id)
-        };
-        info!("DID callback to Java to create connection pointer");
-        info!("DID call cccallback, java_owned_pc = {:?}", java_owned_pc);
-        let platform = self.try_clone()?;
-        let jdk_connection = JDKConnection::new(platform, java_owned_pc);
+        if (1 < 2) {
+            let connection_ptr = connection.get_connection_ptr()?;
+            info!("[javaplatform] Connection_ptr = {:?}", connection_ptr);
+            let call_id = call.call_id();
+            info!("TODO: Create Connection in Java layer (similar to Android CallManager.createConnection)");
+            let java_owned_pc = unsafe {
+                (self.createConnectionCallback)(connection_ptr.as_ptr() as u64, call_id)
+            };
+            info!("DID callback to Java to create connection pointer");
+            info!("DID call cccallback, java_owned_pc = {:?}", java_owned_pc);
+            let platform = self.try_clone()?;
+            let jdk_connection = JDKConnection::new(platform, java_owned_pc);
+            info!("Done with create_connection!");
+        } else {
+// Like android::call_manager::create_peer_connection
 /*
-        let rffi_peer_connection = unsafe {
-              webrtc::Arc::from_borrowed(webrtc::ptr::BorrowedRc::from_ptr(
-                  java_owned_pc as *const peer_connection::RffiPeerConnection
-              ) )
-        };
-        info!("We have rffi pc at {:?}", rffi_peer_connection);
-        if rffi_peer_connection.is_null() {
-            info!("NULL PEER CONNECTION!");
-        }
+            let pc_observer = PeerConnectionObserver::new(
+                connection.get_connection_ptr()?,
+                false, /* enable_frame_encryption */
+                true,  /* enable_video_frame_event */
+            )?;
+            let pc = self.peer_connection_factory.create_peer_connection(
+                pc_observer,
+                context.hide_ip,
+                &context.ice_server,
+                context.outgoing_audio_track.clone(),
+                Some(context.outgoing_video_track.clone()),
+            )?;
 
-        // Note: We have to make sure the PeerConnectionFactory outlives this PC because we're not getting
-        // any help from the type system when passing in a None for the PeerConnectionFactory here.
-        let peer_connection = PeerConnection::new(rffi_peer_connection, None, None);
-        info!("We have pc at {:?}", peer_connection);
-
-        connection.set_peer_connection(peer_connection)?;
-
-        info!("connection: {:?}", connection);
-
+            connection.set_peer_connection(pc)?;
 */
-        info!("Done with create_connection!");
+        }
 
         Ok(connection)
     }
@@ -242,10 +211,8 @@ impl Platform for JavaPlatform {
         direction: CallDirection,
         call_media_type: CallMediaType,
     ) -> Result<()> {
-        info!(
-            "on_start_call(): call_id: {:?}, direction: {}",
-            call_id, direction
-        );
+        info!("on_start_call(): call_id: {:?}, remote_peer: {:?}, direction: {}",
+            call_id, remote_peer, direction);
         info!("Current thread = {:?}", std::thread::current().id());
         unsafe {
             info!("Ready to call callback");
@@ -253,7 +220,7 @@ impl Platform for JavaPlatform {
             info!("Ready to call callback for {}",self.bogusVal);
             // info!("Ready to call callback at {:?}",self.startCallback);
             // myCallback(39);
-            let pid : u64= remote_peer.address;
+            let pid = 123;
             (self.startCallback)(call_id, pid, direction, call_media_type);
             info!("DID call callback");
         }
@@ -510,3 +477,14 @@ impl sfu::Delegate for JavaPlatform {
 
 
 }
+/*
+    fn embedded_create_connection(connection: Connection, call: Call) {
+    }
+
+    // similar to native.rs
+    fn native_create_connection(connection : Connection) {
+
+    }
+*/
+
+
