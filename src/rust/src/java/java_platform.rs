@@ -1,6 +1,6 @@
-use std::collections::HashSet;
+use std::collections::{HashSet, HashMap};
 use std::fmt;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use crate::common::{ApplicationEvent, CallDirection, CallId, CallMediaType, DeviceId, Result};
 use crate::core::bandwidth_mode::BandwidthMode;
@@ -14,9 +14,10 @@ use crate::lite::{
 };
 
 use crate::webrtc;
-use crate::webrtc::media::{MediaStream, VideoTrack};
+use crate::webrtc::media::{AudioTrack, MediaStream, VideoFrame, VideoSink, VideoTrack};
 use crate::webrtc::peer_connection::{AudioLevel, ReceivedAudioLevel};
 use crate::webrtc::peer_connection_observer::{NetworkRoute, PeerConnectionObserver};
+use crate::webrtc::peer_connection_factory::{self as pcf, IceServer, PeerConnectionFactory};
 use crate::webrtc::peer_connection::RffiPeerConnection;
 
 pub type PeerId = String;
@@ -57,7 +58,36 @@ extern "C" {
         jni_owned_pc: i64,
     ) -> webrtc::ptr::BorrowedRc<RffiPeerConnection>;
 }
-pub type JavaCallContext = String;
+// pub type JavaCallContext = String;
+
+#[derive(Clone)]
+pub struct JavaCallContext {
+    hide_ip: bool,
+    ice_server: IceServer,
+    outgoing_audio_track: AudioTrack,
+    outgoing_video_track: VideoTrack,
+    incoming_video_sink: Box<dyn VideoSink>,
+}
+
+impl JavaCallContext {
+    pub fn new(
+        hide_ip: bool,
+        ice_server: IceServer,
+        outgoing_audio_track: AudioTrack,
+        outgoing_video_track: VideoTrack,
+        incoming_video_sink: Box<dyn VideoSink>,
+    ) -> Self {
+        Self {
+            hide_ip,
+            ice_server,
+            outgoing_audio_track,
+            outgoing_video_track,
+            incoming_video_sink,
+        }
+    }
+}
+
+impl PlatformItem for JavaCallContext {}
 
 pub struct JavaMediaStream {
 }
@@ -84,6 +114,7 @@ extern "C" fn dummyCreateConnection(_ptr: u64, call_id: CallId) -> i64 {
 
 #[repr(C)]
 #[allow(non_snake_case)]
+#[derive(Clone)]
 pub struct JavaPlatform {
 #[allow(non_snake_case)]
     pub startCallback: unsafe extern "C" fn(call_id: CallId,
@@ -91,26 +122,44 @@ pub struct JavaPlatform {
                                             direction: CallDirection,
                                             call_media_type: CallMediaType),
     pub createConnectionCallback: unsafe extern "C" fn(connection_ptr: u64, call_id: CallId) -> i64,
+    pub peer_connection_factory: PeerConnectionFactory,
+    pub context: JavaCallContext,
     pub bogusVal: i32
 }
 
 impl JavaPlatform {
-    pub fn new() -> Self {
+    pub fn new() -> Result<Self> {
         info!("JavaPlatform created!");
-        Self {
+        let myfactory = PeerConnectionFactory::new(pcf::Config {..Default::default()})?;
+        let outgoing_audio_track = myfactory.create_outgoing_audio_track()?;
+        outgoing_audio_track.set_enabled(false);
+        let outgoing_video_source = myfactory.create_outgoing_video_source()?;
+        let outgoing_video_track =
+            myfactory.create_outgoing_video_track(&outgoing_video_source)?;
+        outgoing_video_track.set_enabled(false);
+        let incoming_video_sink = Box::new(LastFramesVideoSink::default());
+        let ice_server = IceServer::new(String::from("iceuser"), String::from("icepwd"), Vec::new());
+
+        Ok(Self {
             startCallback : dummyStart,
             createConnectionCallback : dummyCreateConnection,
+            peer_connection_factory: myfactory,
+            context : JavaCallContext::new(false, ice_server, outgoing_audio_track, outgoing_video_track, incoming_video_sink),
             bogusVal: 12
-        }
+        })
     }
 
+/*
     pub fn try_clone(&self) -> Result<Self> {
         Ok(Self {
             startCallback : self.startCallback,
             createConnectionCallback : dummyCreateConnection,
+            peer_connection_factory: PeerConnectionFactory::new(pcf::Config {..Default::default()})?,
+            context: self.context,
             bogusVal: 15
         })
     }
+*/
 
     #[no_mangle]
     pub unsafe extern "C" fn setStartCallCallback(&mut self, func: unsafe extern "C" fn(CallId, u64, CallDirection, CallMediaType)) {
@@ -118,6 +167,37 @@ impl JavaPlatform {
     }
 
 }
+#[derive(Clone, Default)]
+pub struct LastFramesVideoSink {
+    last_frame_by_track_id: Arc<Mutex<HashMap<u32, VideoFrame>>>,
+}
+
+impl VideoSink for LastFramesVideoSink {
+    fn on_video_frame(&self, track_id: u32, frame: VideoFrame) {
+        self.last_frame_by_track_id
+            .lock()
+            .unwrap()
+            .insert(track_id, frame);
+    }
+
+    fn box_clone(&self) -> Box<dyn VideoSink> {
+        Box::new(self.clone())
+    }
+}
+
+impl LastFramesVideoSink {
+    fn pop(&self, track_id: u32) -> Option<VideoFrame> {
+        self.last_frame_by_track_id
+            .lock()
+            .unwrap()
+            .remove(&track_id)
+    }
+
+    fn clear(&self) {
+        self.last_frame_by_track_id.lock().unwrap().clear();
+    }
+}
+
 
 impl http::Delegate for JavaPlatform {
     fn send_request(&self, _request_id: u32, _request: http::Request) {
@@ -168,7 +248,7 @@ impl Platform for JavaPlatform {
             audio_levels_interval,
             None,
         )?;
-        if (1 < 2) {
+        if (1 > 2) {
             let connection_ptr = connection.get_connection_ptr()?;
             info!("[javaplatform] Connection_ptr = {:?}", connection_ptr);
             let call_id = call.call_id();
@@ -178,12 +258,11 @@ impl Platform for JavaPlatform {
             };
             info!("DID callback to Java to create connection pointer");
             info!("DID call cccallback, java_owned_pc = {:?}", java_owned_pc);
-            let platform = self.try_clone()?;
-            let jdk_connection = JDKConnection::new(platform, java_owned_pc);
+            // let platform = self.try_clone()?;
+            // let jdk_connection = JDKConnection::new(platform, java_owned_pc);
             info!("Done with create_connection!");
         } else {
-// Like android::call_manager::create_peer_connection
-/*
+            let context = call.call_context()?;
             let pc_observer = PeerConnectionObserver::new(
                 connection.get_connection_ptr()?,
                 false, /* enable_frame_encryption */
@@ -198,7 +277,6 @@ impl Platform for JavaPlatform {
             )?;
 
             connection.set_peer_connection(pc)?;
-*/
         }
 
         Ok(connection)

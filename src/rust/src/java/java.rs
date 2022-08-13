@@ -12,10 +12,15 @@ use crate::core::util::{ptr_as_mut, ptr_as_box};
 use crate::error::RingRtcError;
 use crate::java::call_manager::JavaCallManager;
 use crate::java::java_platform::{JavaPlatform,PeerId};
+use crate::java::java_platform::JavaCallContext;
+use crate::java::java_platform::LastFramesVideoSink;
 use crate::lite::http;
 use crate::webrtc;
 use crate::webrtc::peer_connection_observer::PeerConnectionObserver;
 use crate::webrtc::peer_connection::{PeerConnection,RffiPeerConnection};
+use crate::webrtc::peer_connection_factory::{
+    self as pcf, AudioDevice, IceServer, PeerConnectionFactory,};
+
 
 fn init_logging() {
     env_logger::builder()
@@ -47,7 +52,7 @@ pub struct IcePack {
 pub unsafe extern "C" fn createJavaPlatform() -> *mut JavaPlatform {
     init_logging();
     let platform = JavaPlatform::new();
-    let platform_box = Box::new(platform);
+    let platform_box = Box::new(platform.unwrap());
     Box::into_raw(platform_box)
 }
 
@@ -66,8 +71,9 @@ pub unsafe extern "C" fn createCallManager(pm: u64) -> i64 {
 
 fn create_java_call_manager(platform: JavaPlatform) -> Result<*mut JavaCallManager> {
     // let platform = JavaPlatform::new();
-    let http_client = http::DelegatingClient::new(platform.try_clone()?);
-    let call_manager = JavaCallManager::new(platform, http_client)?;
+    // let http_client = http::DelegatingClient::new(platform.try_clone()?);
+    let http_client = http::DelegatingClient::new(platform.clone());
+    let call_manager = JavaCallManager::new(platform, http_client).unwrap();
     info!("Created cm, platform = {:?}", call_manager.platform());
     let call_manager_box = Box::new(call_manager);
     Ok(Box::into_raw(call_manager_box) )
@@ -136,12 +142,24 @@ pub unsafe extern "C" fn received_offer(
 
 #[no_mangle]
 pub unsafe extern "C" fn proceed(
-    call_manager: u64, call_id: u64, bandwidth_mode: i32, audio_levels_interval_millis:i32) {
+    platform: u64, call_manager: u64, call_id: u64, bandwidth_mode: i32, audio_levels_interval_millis:i32) {
     info!("JavaRing, proceed called");
     let call_manager = ptr_as_mut(call_manager as *mut JavaCallManager).unwrap() ;
+    let platform = ptr_as_mut(platform as *mut JavaPlatform).unwrap() ;
     let call_id = CallId::from(call_id);
     let bandwidth_mode = BandwidthMode::from_i32(bandwidth_mode);
-    let context = 123.to_string();
+
+        let myfactory = &platform.peer_connection_factory;
+        let outgoing_audio_track = myfactory.create_outgoing_audio_track().unwrap();
+        outgoing_audio_track.set_enabled(false);
+        let outgoing_video_source = myfactory.create_outgoing_video_source().unwrap();
+        let outgoing_video_track =
+            myfactory.create_outgoing_video_track(&outgoing_video_source).unwrap();
+        outgoing_video_track.set_enabled(false);
+        let incoming_video_sink = Box::new(LastFramesVideoSink::default());
+        let ice_server = IceServer::new(String::from("iceuser"), String::from("icepwd"), Vec::new());
+        let context = JavaCallContext::new(false, ice_server, outgoing_audio_track, outgoing_video_track, incoming_video_sink);
+
     let audio_levels_interval = if audio_levels_interval_millis <= 0 { 
         None
     } else {
