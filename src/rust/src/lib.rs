@@ -98,6 +98,7 @@ pub mod native;
 mod java {
     mod java;
     mod java_platform;
+    mod javanative;
     mod call_manager;
 }
 

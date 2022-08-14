@@ -17,7 +17,7 @@ use crate::webrtc;
 use crate::webrtc::peer_connection_observer::PeerConnectionObserver;
 use crate::webrtc::peer_connection::{PeerConnection,RffiPeerConnection};
 
-fn init_logging() {
+pub fn init_logging() {
     env_logger::builder()
         .filter(None, log::LevelFilter::Debug)
         .init();
