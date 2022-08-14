@@ -13,6 +13,8 @@ use crate::core::call_manager::CallManager;
 use crate::core::group_call;
 use crate::core::group_call::{GroupId, SignalingMessageUrgency};
 use crate::core::signaling;
+use crate::core::util::{ptr_as_mut, ptr_as_box};
+
 use crate::lite::{
     http,
     sfu::{DemuxId, GroupMember, PeekInfo, UserId},
@@ -349,11 +351,30 @@ pub unsafe extern "C" fn initRingRTC() -> i64 {
     1
 }
 
+fn create_call_endpoint(audio: bool) -> Result<*mut CallEndpoint> {
+    let call_endpoint = CallEndpoint::new(audio).unwrap();
+    let call_endpoint_box = Box::new(call_endpoint);
+    Ok(Box::into_raw(call_endpoint_box))
+}
 #[no_mangle]
 pub unsafe extern "C" fn createCallEndpoint() -> i64 {
     info!("Creating CallEndpoint");
-    let ep = CallEndpoint::new(false);
-    let endpoint = Box::new(ep);
-    info!("[JV] endpoint created!");
-    Box::into_raw(endpoint) as i64
+    let answer: i64 = match create_call_endpoint(false) {
+        Ok(v) => v as i64,
+        Err(e) => {
+            info!("Error creating callEndpoint: {}", e);
+            0
+        }
+    };
+    info!("[JV] endpoint created at {}", answer);
+    answer
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn receivedOffer(endpoint: i64, call_id: CallId) -> i64 {
+    let callendpoint = ptr_as_mut(endpoint as *mut CallEndpoint).unwrap();
+    info!("Received offer, endpoint = {:?}", endpoint);
+    let cm = &callendpoint.call_manager;
+    info!("Received offer, cm = {:?}", cm);
+    2
 }

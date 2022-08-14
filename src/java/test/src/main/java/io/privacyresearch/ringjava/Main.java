@@ -43,7 +43,34 @@ public class Main {
         long init = initRingRTC();
         System.err.println("Init RingRtc -> "+init);
         long answer = createCallEndpoint();
-        System.err.println("ANSWER = "+ answer);
+        System.err.println("ce = "+ answer);
+        offerOnThread(answer);
+        long offer = sendReceivedOffer(scope, answer, 975);
+        offerOnThread(answer);
+        long offer2 = sendReceivedOffer(scope, answer, 753);
+        System.err.println("offer2 = "+ offer2);
+        offerOnThread(answer);
+    }
+
+    long sendReceivedOffer(MemorySession scope, long callManagerId, int callId) {
+        long offer = receivedOffer(callManagerId, callIdSegment(scope, callId));
+        return offer;
+    }
+
+    MemorySegment callIdSegment(MemorySession scope, int callId) {
+        MemorySegment callIdSegment = MemorySegment.allocateNative(8, scope);
+        callIdSegment.set(ValueLayout.JAVA_LONG, 0l, callId);
+        return callIdSegment;
+    }
+
+    void offerOnThread(long ce) {
+        Thread t = new Thread() {
+            @Override public void run() {
+                long offer = 0;// receivedOffer(ce);
+                System.err.println("In thread, offer = " + offer);
+            }
+        };
+        t.start();
     }
 
     static void flow() {
