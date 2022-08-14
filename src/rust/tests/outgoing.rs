@@ -24,7 +24,9 @@ use ringrtc::protobuf;
 use ringrtc::sim::error::SimError;
 use ringrtc::webrtc;
 use ringrtc::webrtc::media::MediaStream;
-use ringrtc::webrtc::peer_connection_observer::{NetworkAdapterType, NetworkRoute};
+use ringrtc::webrtc::peer_connection_observer::{
+    NetworkAdapterType, NetworkRoute, TransportProtocol,
+};
 
 #[macro_use]
 mod common;
@@ -986,8 +988,7 @@ fn update_bandwidth_mode_low() {
     )
 }
 
-#[test]
-fn update_bandwidth_when_relayed() {
+fn update_bandwidth_when_relayed(local: bool) {
     test_init();
 
     let context = connected_and_accepted_outbound_call();
@@ -998,7 +999,9 @@ fn update_bandwidth_when_relayed() {
         .inject_ice_network_route_changed(NetworkRoute {
             local_adapter_type: NetworkAdapterType::Unknown,
             local_adapter_type_under_vpn: NetworkAdapterType::Unknown,
-            relayed: true,
+            local_relayed: local,
+            local_relay_protocol: TransportProtocol::Unknown,
+            remote_relayed: !local,
         })
         .unwrap();
     cm.synchronize().expect(error_line!());
@@ -1070,7 +1073,9 @@ fn update_bandwidth_when_relayed() {
         .inject_ice_network_route_changed(NetworkRoute {
             local_adapter_type: NetworkAdapterType::Unknown,
             local_adapter_type_under_vpn: NetworkAdapterType::Unknown,
-            relayed: false,
+            local_relayed: false,
+            local_relay_protocol: TransportProtocol::Unknown,
+            remote_relayed: false,
         })
         .unwrap();
     cm.synchronize().expect(error_line!());
@@ -1091,6 +1096,16 @@ fn update_bandwidth_when_relayed() {
             .unwrap()
             .last_sent_max_bitrate_bps()
     );
+}
+
+#[test]
+fn update_bandwidth_when_relayed_local() {
+    update_bandwidth_when_relayed(true);
+}
+
+#[test]
+fn update_bandwidth_when_relayed_remote() {
+    update_bandwidth_when_relayed(false);
 }
 
 #[test]
@@ -2327,6 +2342,185 @@ fn glare_before_connect_equal() {
     assert_eq!(context.call_concluded_count(), 2);
 }
 
+#[test]
+fn glare_before_connect_loser_with_incoming_ice_candidates_before_start() {
+    // We don't actually expose a way to automatically test that the ICE candidates are handled.
+    // You can check manually by running with RUST_LOG=ringrtc::core::connection/ice_candidates
+    test_init();
+
+    let context = TestContext::new();
+    let mut cm = context.cm();
+
+    let incoming_call_id = CallId::new(u64::MAX);
+    cm.received_ice(
+        incoming_call_id,
+        random_received_ice_candidate(&context.prng),
+    )
+    .expect(error_line!());
+
+    let remote_peer = format!("REMOTE_PEER-{}", context.prng.gen::<u16>());
+    cm.call(remote_peer, CallMediaType::Audio, 1)
+        .expect(error_line!());
+
+    cm.synchronize().expect(error_line!());
+
+    assert!(cm.active_call().is_ok());
+    assert_eq!(context.start_outgoing_count(), 1);
+    assert_eq!(context.start_incoming_count(), 0);
+
+    let active_call = context.active_call();
+    assert_eq!(
+        active_call.state().expect(error_line!()),
+        CallState::WaitingToProceed
+    );
+
+    let outgoing_call_id = active_call.call_id();
+    cm.proceed(
+        outgoing_call_id,
+        format!("CONTEXT-{}", context.prng.gen::<u16>()),
+        BandwidthMode::Normal,
+        None,
+    )
+    .expect(error_line!());
+
+    cm.synchronize().expect(error_line!());
+
+    cm.received_answer(
+        outgoing_call_id,
+        random_received_answer(&context.prng, 1 as DeviceId),
+    )
+    .expect(error_line!());
+    cm.received_ice(
+        outgoing_call_id,
+        random_received_ice_candidate(&context.prng),
+    )
+    .expect(error_line!());
+
+    cm.synchronize().expect(error_line!());
+
+    assert_eq!(context.offers_sent(), 1,);
+    assert_eq!(
+        active_call.state().expect(error_line!()),
+        CallState::ConnectingBeforeAccepted
+    );
+    assert_eq!(context.error_count(), 0);
+    assert_eq!(context.ended_count(), 0);
+    assert!(cm.busy());
+
+    // Create incoming call with same remote
+    let remote_peer = {
+        let remote_peer = active_call.remote_peer().expect(error_line!());
+        remote_peer.to_owned()
+    };
+    info!("active remote_peer: {}", remote_peer);
+
+    // The incoming offer's call_id will be greater than the active call_id.
+    assert!(
+        context.active_call().call_id().as_u64() < std::u64::MAX,
+        "Test case not valid if incoming call-id can't be greater than the active call-id."
+    );
+
+    // Make sure we don't interfere with the lifetime of the call after this point.
+    drop(active_call);
+
+    cm.received_offer(
+        remote_peer,
+        incoming_call_id,
+        random_received_offer(&context.prng, Duration::from_secs(0)),
+    )
+    .expect(error_line!());
+
+    cm.synchronize().expect(error_line!());
+
+    assert_eq!(context.error_count(), 0);
+    assert_eq!(context.event_count(ApplicationEvent::EndedRemoteGlare), 1);
+    assert_eq!(context.normal_hangups_sent(), 1);
+    assert_eq!(
+        context.event_count(ApplicationEvent::ReceivedOfferWithGlare),
+        0
+    );
+    assert_eq!(context.busys_sent(), 0);
+    assert_eq!(context.call_concluded_count(), 1);
+
+    cm.proceed(
+        incoming_call_id,
+        format!("CONTEXT-{}", context.prng.gen::<u16>()),
+        BandwidthMode::Normal,
+        None,
+    )
+    .expect(error_line!());
+
+    cm.synchronize().expect(error_line!());
+
+    assert_eq!(context.answers_sent(), 1);
+    assert_eq!(context.error_count(), 0);
+    assert_eq!(context.ended_count(), 0);
+    assert!(cm.busy());
+}
+
+#[test]
+fn glare_before_connect_loser_with_incoming_ice_candidates_after_start() {
+    // We don't actually expose a way to automatically test that the ICE candidates are handled.
+    // You can check manually by running with RUST_LOG=ringrtc::core::connection/ice_candidates
+    let context = start_outbound_call();
+    let mut cm = context.cm();
+
+    let incoming_call_id = CallId::new(u64::MAX);
+    cm.received_ice(
+        incoming_call_id,
+        random_received_ice_candidate(&context.prng),
+    )
+    .expect(error_line!());
+
+    // Create incoming call with same remote
+    let remote_peer = {
+        let active_call = context.active_call();
+        let remote_peer = active_call.remote_peer().expect(error_line!());
+        remote_peer.to_owned()
+    };
+    info!("active remote_peer: {}", remote_peer);
+
+    // The incoming offer's call_id will be greater than the active call_id.
+    assert!(
+        context.active_call().call_id().as_u64() < std::u64::MAX,
+        "Test case not valid if incoming call-id can't be greater than the active call-id."
+    );
+
+    cm.received_offer(
+        remote_peer,
+        incoming_call_id,
+        random_received_offer(&context.prng, Duration::from_secs(0)),
+    )
+    .expect(error_line!());
+
+    cm.synchronize().expect(error_line!());
+
+    assert_eq!(context.error_count(), 0);
+    assert_eq!(context.event_count(ApplicationEvent::EndedRemoteGlare), 1);
+    assert_eq!(context.normal_hangups_sent(), 1);
+    assert_eq!(
+        context.event_count(ApplicationEvent::ReceivedOfferWithGlare),
+        0
+    );
+    assert_eq!(context.busys_sent(), 0);
+    assert_eq!(context.call_concluded_count(), 1);
+
+    cm.proceed(
+        incoming_call_id,
+        format!("CONTEXT-{}", context.prng.gen::<u16>()),
+        BandwidthMode::Normal,
+        None,
+    )
+    .expect(error_line!());
+
+    cm.synchronize().expect(error_line!());
+
+    assert_eq!(context.answers_sent(), 1);
+    assert_eq!(context.error_count(), 0);
+    assert_eq!(context.ended_count(), 0);
+    assert!(cm.busy());
+}
+
 // Two users call each other at the same time, offer received after the
 // outgoing call gets an ICE connection. The winning side will continue
 // with the outgoing call and end the incoming call.
@@ -2835,7 +3029,7 @@ fn group_call_ring_message_age_does_not_affect_ring_expiration() {
 }
 
 #[test]
-fn group_call_ring_first_ring_wins() {
+fn group_call_ring_last_ring_wins() {
     test_init();
 
     let context = TestContext::new();
@@ -2906,7 +3100,7 @@ fn group_call_ring_first_ring_wins() {
                 protobuf::signaling::CallMessage {
                     ring_response: Some(protobuf::signaling::call_message::RingResponse {
                         group_id: Some(group_id.to_vec()),
-                        ring_id: Some(first_ring_id.into()),
+                        ring_id: Some(second_ring_id.into()),
                         r#type: Some(
                             protobuf::signaling::call_message::ring_response::Type::Accepted.into()
                         ),

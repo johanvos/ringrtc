@@ -7,6 +7,20 @@ extern crate cbindgen;
 use std::env;
 use std::process::Command;
 
+fn build_protos() {
+    let protos = [
+        "protobuf/group_call.proto",
+        "protobuf/rtp_data.proto",
+        "protobuf/signaling.proto",
+    ];
+
+    prost_build::compile_protos(&protos, &["protobuf"]).expect("Protobufs are valid");
+
+    for proto in &protos {
+        println!("cargo:rerun-if-changed={}", proto);
+    }
+}
+
 fn main() {
     let crate_dir = env::var("CARGO_MANIFEST_DIR").unwrap();
     cbindgen::Builder::new()
@@ -30,6 +44,8 @@ fn main() {
     // We only depend on environment variables, not any files.
     // Explicitly state that by depending on build.rs itself, as recommended.
     println!("cargo:rerun-if-changed=build.rs");
+
+    build_protos();
 
     if cfg!(feature = "native") {
         if let Ok(out_dir) = out_dir {

@@ -21,10 +21,6 @@ ANDROID_SRC_DIR="${RINGRTC_SRC_DIR}/android"
 prepare_workspace_platform() {
     echo "Preparing workspace for Android 0..."
 
-    # Setup NDK toolchains
-    "$BIN_DIR"/install-ndk-toolchains
-    echo "Preparing workspace for Android 1..."
-
     "$BIN_DIR"/fetch-android-deps
     echo "Preparing workspace for Android 2..."
 }

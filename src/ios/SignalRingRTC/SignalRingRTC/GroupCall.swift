@@ -87,6 +87,7 @@ public class RemoteDeviceState: Hashable {
     public internal(set) var addedTime: UInt64  // unix millis
     public internal(set) var speakerTime: UInt64  // unix millis; 0 if they've never spoken
     public internal(set) var forwardingVideo: Bool?
+    public internal(set) var clientDecodedHeight: UInt32?
     public internal(set) var audioLevel: UInt16
 
     public internal(set) var videoTrack: RTCVideoTrack?
@@ -594,7 +595,7 @@ public class GroupCall {
 
     func handleIncomingVideoTrack(remoteDemuxId: UInt32, videoTrack: RTCVideoTrack) {
         AssertIsOnMainThread()
-        Logger.debug("handleIncomingVideoTrack() for remoteDemuxId: \(remoteDemuxId)")
+        Logger.debug("handleIncomingVideoTrack() for remoteDemuxId: 0x\(String(remoteDemuxId, radix: 16))")
 
         guard let remoteDeviceState = self.remoteDeviceStates[remoteDemuxId] else {
             Logger.debug("No remote device state found for remoteDemuxId")

@@ -73,8 +73,8 @@ macro_rules! handle_active_call_api {
         info!("API:{}():", stringify!($f));
         let mut call_manager = $s.clone();
         let mut cm_error = $s.clone();
-        let future = lazy(move |_| $f(&mut call_manager $( , $a)*)).map_err(move |err| {
-            error!("Future {} Failed: {}", stringify!($f), err);
+        let future = lazy(move |_| $f(&mut call_manager $( , $a)*)).unwrap_or_else(move |err| {
+            error!("Future {} failed: {}", stringify!($f), err);
             let _ = cm_error.internal_api_error( err);
         });
         $s.worker_spawn(future)
@@ -113,7 +113,7 @@ macro_rules! handle_api {
     ) => {{
         let mut call_manager = $s.clone();
         info!("API:{}():", stringify!($f));
-        let future = lazy(move |_| $f(&mut call_manager $( , $a)*)).map_err(move |err| {
+        let future = lazy(move |_| $f(&mut call_manager $( , $a)*)).unwrap_or_else(move |err| {
             error!("Future {} failed: {}", stringify!($f), err);
         });
         $s.worker_spawn(future)
@@ -208,7 +208,84 @@ enum ReceivedOfferCollision {
     ReCall,
 }
 
-#[repr(C)]
+/// Management of 1:1 call messages that arrive before the offer for a particular call.
+///
+/// We don't save all message kinds here, only the ones that can affect an incoming call.
+enum PendingCallMessages {
+    None,
+    IceCandidates {
+        call_id: CallId,
+        received: Vec<signaling::ReceivedIce>,
+    },
+    Hangup {
+        call_id: CallId,
+        received: signaling::ReceivedHangup,
+    },
+}
+
+impl PendingCallMessages {
+    fn save_ice_candidates(&mut self, new_call_id: CallId, new_received: signaling::ReceivedIce) {
+        info!("no active call; saving ice candidates for {}", new_call_id);
+        match self {
+            PendingCallMessages::IceCandidates { call_id, received } if call_id == &new_call_id => {
+                // Avoid growing unbounded.
+                if received.len() >= 30 {
+                    received.remove(0);
+                }
+                received.push(new_received);
+                return;
+            }
+            PendingCallMessages::Hangup { call_id, .. } if call_id == &new_call_id => {
+                // Ice candidates arriving after a hangup are never needed.
+                return;
+            }
+            PendingCallMessages::IceCandidates { call_id, .. }
+            | PendingCallMessages::Hangup { call_id, .. } => {
+                warn!("dropping pending messages for {}", call_id);
+            }
+            PendingCallMessages::None => {}
+        }
+        *self = PendingCallMessages::IceCandidates {
+            call_id: new_call_id,
+            received: vec![new_received],
+        }
+    }
+
+    fn save_hangup(&mut self, new_call_id: CallId, new_received: signaling::ReceivedHangup) {
+        info!("no active call; saving hangup for {}", new_call_id);
+        match self {
+            PendingCallMessages::IceCandidates { call_id, .. } if call_id == &new_call_id => {
+                info!(
+                    "discarding pending ice candidates for {} in favor of hangup",
+                    call_id
+                );
+            }
+            PendingCallMessages::Hangup { call_id, .. } if call_id == &new_call_id => {
+                error!(
+                    "received two hangup messages for {}; taking the later one",
+                    call_id
+                );
+            }
+            PendingCallMessages::IceCandidates { call_id, .. }
+            | PendingCallMessages::Hangup { call_id, .. } => {
+                warn!("dropping pending messages for {}", call_id);
+            }
+            PendingCallMessages::None => {}
+        }
+
+        *self = PendingCallMessages::Hangup {
+            call_id: new_call_id,
+            received: new_received,
+        }
+    }
+}
+
+impl Default for PendingCallMessages {
+    fn default() -> Self {
+        Self::None
+    }
+}
+
 pub struct CallManager<T>
 where
     T: Platform,
@@ -221,6 +298,8 @@ where
     call_by_call_id: Arc<CallMutex<HashMap<CallId, Call<T>>>>,
     /// CallId of the active call.
     active_call_id: Arc<CallMutex<Option<CallId>>>,
+    /// 1:1 call messages that arrived before the Offer for a particular call.
+    pending_call_messages: Arc<CallMutex<PendingCallMessages>>,
     /// Map of all group calls.
     group_call_by_client_id: Arc<CallMutex<HashMap<group_call::ClientId, group_call::Client>>>,
     /// Next value of the group call client id (sequential).
@@ -292,6 +371,7 @@ where
             self_uuid: Arc::clone(&self.self_uuid),
             call_by_call_id: Arc::clone(&self.call_by_call_id),
             active_call_id: Arc::clone(&self.active_call_id),
+            pending_call_messages: Arc::clone(&self.pending_call_messages),
             group_call_by_client_id: Arc::clone(&self.group_call_by_client_id),
             next_group_call_client_id: Arc::clone(&self.next_group_call_client_id),
             outstanding_group_rings: Arc::clone(&self.outstanding_group_rings),
@@ -324,6 +404,10 @@ where
             self_uuid: Arc::new(CallMutex::new(None, "self_uuid")),
             call_by_call_id: Arc::new(CallMutex::new(HashMap::new(), "call_by_call_id")),
             active_call_id: Arc::new(CallMutex::new(None, "active_call_id")),
+            pending_call_messages: Arc::new(CallMutex::new(
+                PendingCallMessages::None,
+                "pending_individual_call_messages",
+            )),
             group_call_by_client_id: Arc::new(CallMutex::new(
                 HashMap::new(),
                 "group_call_by_client_id",
@@ -381,7 +465,7 @@ where
         let future = lazy(move |_| {
             call_manager.handle_call(remote_peer, call_id, call_media_type, local_device_id)
         })
-        .map_err(move |err| {
+        .unwrap_or_else(move |err| {
             error!("Handle call failed: {}", err);
             cm_error.internal_create_api_error(&remote_peer_error, call_id, err);
         });
@@ -505,7 +589,7 @@ where
         let remote_peer_error = remote_peer.clone();
         let future =
             lazy(move |_| call_manager.handle_received_offer(remote_peer, call_id, received))
-                .map_err(move |err| {
+                .unwrap_or_else(move |err| {
                     error!("Handle received offer failed: {}", err);
                     cm_error.internal_create_api_error(&remote_peer_error, call_id, err);
                 });
@@ -708,7 +792,7 @@ where
     /// Spawn a future on the worker runtime if enabled.
     fn worker_spawn<F>(&mut self, future: F) -> Result<()>
     where
-        F: Future<Output = std::result::Result<(), ()>> + Send + 'static,
+        F: Future<Output = ()> + Send + 'static,
     {
         let mut worker_runtime = self.worker_runtime.lock()?;
         if let Some(worker_runtime) = &mut *worker_runtime {
@@ -735,7 +819,7 @@ where
                 .into())
             }
         })
-        .map_err(move |err: anyhow::Error| {
+        .unwrap_or_else(move |err: anyhow::Error| {
             error!("Close call manager future failed: {}", err);
             // Not much else to do here.
         });
@@ -896,7 +980,7 @@ where
             }
             call_manager.terminate_and_drop_call(call_id)
         })
-        .map_err(move |err| {
+        .unwrap_or_else(move |err| {
             error!("Conclude call future failed: {}", err);
             if let Ok(remote_peer) = call_error.remote_peer() {
                 let _ = cm_error.notify_application(
@@ -1303,7 +1387,27 @@ where
                 *active_call_id = Some(incoming_call_id);
                 incoming_call.start_timeout_timer(TIME_OUT_PERIOD)?;
                 incoming_call.handle_received_offer(received)?;
-                incoming_call.inject_start_call()?
+                incoming_call.inject_start_call()?;
+
+                match std::mem::take(&mut *self.pending_call_messages.lock()?) {
+                    PendingCallMessages::None => {}
+                    PendingCallMessages::IceCandidates { call_id, received }
+                        if call_id == incoming_call_id =>
+                    {
+                        for received in received {
+                            incoming_call.inject_received_ice(received)?;
+                        }
+                    }
+                    PendingCallMessages::Hangup { call_id, received }
+                        if call_id == incoming_call_id =>
+                    {
+                        incoming_call.inject_received_hangup(received)?;
+                    }
+                    PendingCallMessages::IceCandidates { call_id, .. }
+                    | PendingCallMessages::Hangup { call_id, .. } => {
+                        info!("dropping pending messages for {}", call_id);
+                    }
+                }
             }
         }
 info!("Ready to return");
@@ -1353,13 +1457,31 @@ info!("Ready to return");
             )
         );
 
-        let mut active_call = check_active_call!(self, "handle_received_ice");
-        if active_call.call_id() != call_id {
-            ringbenchx!(RingBench::Cm, RingBench::App, "inactive call_id");
-            return Ok(());
+        match self.active_call() {
+            Ok(mut active_call) if active_call.call_id() == call_id => {
+                active_call.inject_received_ice(received)?;
+            }
+            Ok(active_call) => {
+                if active_call.direction() == CallDirection::OutGoing {
+                    // Save the ICE candidates anyway, in case we have a glare scenario.
+                    self.pending_call_messages
+                        .lock()?
+                        .save_ice_candidates(call_id, received);
+                }
+            }
+            Err(_) => {
+                if *self.busy.lock()? {
+                    // We're in a group call. Discard the candidates.
+                } else {
+                    // Save it for later in case it's arriving out-of-order.
+                    self.pending_call_messages
+                        .lock()?
+                        .save_ice_candidates(call_id, received);
+                }
+            }
         }
 
-        active_call.inject_received_ice(received)
+        Ok(())
     }
 
     /// Handle received_hangup() API from application.
@@ -1377,13 +1499,31 @@ info!("Ready to return");
             )
         );
 
-        let mut active_call = check_active_call!(self, "handle_received_hangup");
-        if active_call.call_id() != call_id {
-            ringbenchx!(RingBench::Cm, RingBench::App, "inactive call_id");
-            return Ok(());
+        match self.active_call() {
+            Ok(mut active_call) if active_call.call_id() == call_id => {
+                active_call.inject_received_hangup(received)?;
+            }
+            Ok(active_call) => {
+                if active_call.direction() == CallDirection::OutGoing {
+                    // Save the hangup anyway, in case we have a glare scenario.
+                    self.pending_call_messages
+                        .lock()?
+                        .save_hangup(call_id, received);
+                }
+            }
+            Err(_) => {
+                if *self.busy.lock()? {
+                    // We're in a group call. Discard the hangup.
+                } else {
+                    // Save it for later in case it's arriving out-of-order.
+                    self.pending_call_messages
+                        .lock()?
+                        .save_hangup(call_id, received);
+                }
+            }
         }
 
-        active_call.inject_received_hangup(received)
+        Ok(())
     }
 
     /// Handle received_busy() API from application.
@@ -1567,13 +1707,15 @@ info!("Ready to return");
             // Take this opportunity to clear the outstanding rings table
             // (which should be small).
             outstanding_group_rings.retain(|_group_id, ring| !ring.has_expired());
-            // If there's an existing, non-expired ring, don't replace it.
-            outstanding_group_rings
-                .entry(group_id.clone())
-                .or_insert(OutstandingGroupRing {
+            // If there's an existing, non-expired ring, replace it so that the
+            // newly received ring will get cancelled upon joining.
+            outstanding_group_rings.insert(
+                group_id.clone(),
+                OutstandingGroupRing {
                     ring_id,
                     received: Instant::now(),
-                });
+                },
+            );
         }
 
         let mut self_for_timeout = self.clone();
@@ -1589,7 +1731,7 @@ info!("Ready to return");
                 );
                 Ok(())
             }
-            .map_err(|err: anyhow::Error| {
+            .unwrap_or_else(|err: anyhow::Error| {
                 error!("error handling group ring timeout: {}", err);
             }),
         )?;
