@@ -22,20 +22,6 @@ public class Main {
         System.err.println("Hello, ring");
         Main main = new Main();
         main.flow2();
-//        flow();
-//        /
-//System.err.println("CI = " + CallId.class);
-//        try (MemorySession scope = MemorySession.openShared()) {
-//            processByteArray2d(scope);
-//             callback(scope);
-//
-//MemorySegment jByte = MemorySegment.ofArray(new byte[] {1,4,7});
-//MemorySegment cByte = MemorySegment.allocateNative(3,scope);
-//MemorySegment.copy(jByte, 0, cByte, 0, 3);
-//System.err.println("invoke gmv...");
-//gotMyVector(cByte, 3);
-//
-//System.err.println("invoked gmv...");
     }
 
     public void flow2() {
@@ -52,8 +38,24 @@ public class Main {
         offerOnThread(answer);
     }
 
-    long sendReceivedOffer(MemorySession scope, long callManagerId, int callId) {
-        long offer = receivedOffer(callManagerId, callIdSegment(scope, callId));
+    long sendReceivedOffer(MemorySession scope, long callEndpoint, int callId) {
+        byte[] mik = new byte[8];
+        mik[3] = 19;
+        byte[] remoteKey = new byte[8];
+        MemorySegment sik = MemorySegment.ofArray(mik);
+        MemorySegment rik = MemorySegment.ofArray(remoteKey);
+        int callMediaType = 0;
+        int senderDeviceId = 1;
+        int receiverDeviceId = 2;
+        long offer = receivedOffer(callEndpoint,
+                callIdSegment(scope, callId),
+                callMediaType,
+                senderDeviceId,
+                receiverDeviceId,
+                sik,
+                rik,
+                opaqueSegment(scope),
+                0l);
         return offer;
     }
 
@@ -61,6 +63,17 @@ public class Main {
         MemorySegment callIdSegment = MemorySegment.allocateNative(8, scope);
         callIdSegment.set(ValueLayout.JAVA_LONG, 0l, callId);
         return callIdSegment;
+    }
+    
+    MemorySegment opaqueSegment(MemorySession scope) {
+        byte[] opaque = new byte[]{34, 80, 10, 32, 133 - 256, 49, 219 - 256, 22, 137 - 256, 209 - 256, 73, 165 - 256, 83, 178 - 256, 90, 97, 228 - 256, 67, 88, 79, 71, 83, 83, 202 - 256, 101, 253 - 256, 38, 206 - 256, 67, 90, 106, 156 - 256, 249 - 256, 68, 174 - 256, 102, 18, 4, 54, 90, 100, 111, 26, 24, 49, 51, 54, 76, 86, 121, 103, 54, 122, 69, 119, 108, 118, 102, 119, 121, 69, 107, 107, 48, 69, 117, 68, 48, 34, 4, 8, 40, 16, 31, 34, 2, 8, 8, 40, 128 - 256, 137 - 256, 122, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+        int i = 0; while (opaque[i] != 0) i++;
+        int opaqueLength = i;
+        MemorySegment opaqueMs = Opaque.allocate(scope);
+        Opaque.len$set(opaqueMs, opaqueLength);
+        MemorySegment opaqueDataSegment = Opaque.data$slice(opaqueMs);
+        opaqueDataSegment.copyFrom(MemorySegment.ofArray(opaque));
+        return opaqueMs;
     }
 
     void offerOnThread(long ce) {
