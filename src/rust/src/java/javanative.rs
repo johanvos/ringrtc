@@ -15,6 +15,8 @@ use crate::core::group_call::{GroupId, SignalingMessageUrgency};
 use crate::core::signaling;
 use crate::core::util::{ptr_as_mut, ptr_as_box};
 
+use crate::java::java::{MyKey, Opaque};
+
 use crate::lite::{
     http,
     sfu::{DemuxId, GroupMember, PeekInfo, UserId},
@@ -371,10 +373,54 @@ pub unsafe extern "C" fn createCallEndpoint() -> i64 {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn receivedOffer(endpoint: i64, call_id: CallId) -> i64 {
+pub unsafe extern "C" fn receivedOffer(endpoint: i64, call_id: CallId,
+        call_media_type: CallMediaType,
+        sender_device_id: DeviceId,
+        receiver_device_id: DeviceId,
+        sender_identity_key: MyKey,
+        receiver_identity_key: MyKey,
+        opaque: Opaque,
+        age_sec: u64) -> i64 {
     let callendpoint = ptr_as_mut(endpoint as *mut CallEndpoint).unwrap();
     info!("Received offer, endpoint = {:?}", endpoint);
-    let cm = &callendpoint.call_manager;
-    info!("Received offer, cm = {:?}", cm);
+    let peer_id = String::from("MYPEER");
+    let opvec = opaque.data.to_vec();
+    let opvec2 = opvec[0..opaque.len].to_vec();
+    let receiver_identity_key = receiver_identity_key.data.to_vec();
+    let sender_identity_key = sender_identity_key.data.to_vec();
+    info!("Now create offer. cmt = {:?}, oplen = {}", call_media_type,  opaque.len);
+    let offer = signaling::Offer::new(call_media_type, opvec2).unwrap();
+    info!("Created offer.");
+
+    callendpoint.call_manager.received_offer(
+            peer_id,
+            call_id,
+            signaling::ReceivedOffer {
+                offer,
+                age: Duration::from_secs(age_sec),
+                sender_device_id,
+                receiver_device_id,
+                // A Java desktop client cannot be the primary device.
+                receiver_device_is_primary: false,
+                sender_identity_key,
+                receiver_identity_key,
+            },
+        );
+
     2
 }
+
+#[no_mangle]
+pub unsafe extern "C" fn proceedCall(endpoint: i64, call_id: CallId) -> i64 {
+    let callendpoint = ptr_as_mut(endpoint as *mut CallEndpoint).unwrap();
+        let call_context = NativeCallContext::new(
+            hide_ip,
+            ice_server,
+            endpoint.outgoing_audio_track.clone(),
+            endpoint.outgoing_video_track.clone(),
+            endpoint.incoming_video_sink.clone(),
+        );
+
+    147
+}
+
