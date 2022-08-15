@@ -147,7 +147,7 @@ pub unsafe extern "C" fn proceed(
     } else {
         Some(Duration::from_millis(audio_levels_interval_millis as u64))
     };
-    call_manager.proceed(call_id, context, bandwidth_mode, audio_levels_interval);
+    // call_manager.proceed(call_id, context, bandwidth_mode, audio_levels_interval);
 }
 
 #[no_mangle]
@@ -185,6 +185,7 @@ pub fn create_peer_connection(
         native_connection,
         false, /* enable_frame_encryption */
         false, /* enable_video_frame_event */
+        false, 
     )?;
     let rffi_pc = unsafe {
         webrtc::Arc::from_borrowed(webrtc::ptr::BorrowedRc::from_ptr(

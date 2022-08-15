@@ -243,6 +243,11 @@ impl GroupUpdateHandler for EventReporter {
 
 pub struct CallEndpoint {
     call_manager: CallManager<NativePlatform>,
+    outgoing_audio_track: AudioTrack,
+    outgoing_video_source: VideoSource,
+    outgoing_video_track: VideoTrack,
+    incoming_video_sink: Box<LastFramesVideoSink>,
+    peer_connection_factory: PeerConnectionFactory,
 }
 
 impl CallEndpoint {
@@ -260,13 +265,13 @@ impl CallEndpoint {
         let outgoing_audio_track = peer_connection_factory.create_outgoing_audio_track()?;
         outgoing_audio_track.set_enabled(false);
         let outgoing_video_source = peer_connection_factory.create_outgoing_video_source()?;
-        if 2 < 1 {
+        // if 2 < 3 {
             info!("Creating video track, this might fail if there is no camera");
             let outgoing_video_track = peer_connection_factory.create_outgoing_video_track(&outgoing_video_source)?;
-            outgoing_video_track.set_enabled(false);
-        } else {
-            info!("NOT creating video track, see javanative.rs");
-        }
+            // outgoing_video_track.set_enabled(false);
+        // } else {
+            // info!("NOT creating video track, see javanative.rs");
+        // }
 
         let incoming_video_sink = Box::new(LastFramesVideoSink::default());
 
@@ -307,6 +312,11 @@ impl CallEndpoint {
 
         Ok(Self {
             call_manager,
+            outgoing_audio_track,
+            outgoing_video_source,
+            outgoing_video_track,
+            incoming_video_sink,
+            peer_connection_factory,
         })
     }
 }
@@ -411,16 +421,27 @@ pub unsafe extern "C" fn receivedOffer(endpoint: i64, call_id: CallId,
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn proceedCall(endpoint: i64, call_id: CallId) -> i64 {
-    let callendpoint = ptr_as_mut(endpoint as *mut CallEndpoint).unwrap();
-        let call_context = NativeCallContext::new(
-            hide_ip,
-            ice_server,
-            endpoint.outgoing_audio_track.clone(),
-            endpoint.outgoing_video_track.clone(),
-            endpoint.incoming_video_sink.clone(),
-        );
+pub unsafe extern "C" fn proceedCall(endpoint: i64, call_id: CallId, bandwidth_mode: i32, audio_levels_interval_millis:i32) -> i64 {
+    let endpoint = ptr_as_mut(endpoint as *mut CallEndpoint).unwrap();
+    let ice_server = IceServer::new(String::from("iceuser"), String::from("icepwd"), Vec::new());
+    let context = NativeCallContext::new(
+        false,
+        ice_server,
+        endpoint.outgoing_audio_track.clone(),
+        endpoint.outgoing_video_track.clone(),
+        endpoint.incoming_video_sink.clone(),
+    );  
+    let audio_levels_interval = if audio_levels_interval_millis <= 0 { 
+        None
+    } else {
+        Some(Duration::from_millis(audio_levels_interval_millis as u64))
+    };  
+    endpoint.call_manager.proceed(
+        call_id,
+        context,
+        BandwidthMode::from_i32(bandwidth_mode),
+        audio_levels_interval);
 
-    147
+    147 
 }
 

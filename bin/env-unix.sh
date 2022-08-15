@@ -10,6 +10,6 @@
 
 prepare_workspace_platform() {
     echo "Preparing workspace for Unix..."
-    $BIN_DIR"/fetch-android-deps
+    $BIN_DIR/fetch-android-deps
     # @note Nothing here yet.
 }

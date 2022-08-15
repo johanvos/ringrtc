@@ -1,6 +1,6 @@
-use std::collections::HashSet;
+use std::collections::{HashSet, HashMap};
 use std::fmt;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use crate::common::{ApplicationEvent, CallDirection, CallId, CallMediaType, DeviceId, Result};
 use crate::core::bandwidth_mode::BandwidthMode;
@@ -14,8 +14,9 @@ use crate::lite::{
 };
 
 use crate::webrtc;
-use crate::webrtc::media::{MediaStream, VideoTrack};
+use crate::webrtc::media::{AudioTrack, MediaStream, VideoFrame, VideoSink, VideoTrack};
 use crate::webrtc::peer_connection::{AudioLevel, ReceivedAudioLevel};
+use crate::webrtc::peer_connection_factory::{IceServer };
 use crate::webrtc::peer_connection_observer::{NetworkRoute, PeerConnectionObserver};
 use crate::webrtc::peer_connection::RffiPeerConnection;
 
@@ -57,7 +58,37 @@ extern "C" {
         jni_owned_pc: i64,
     ) -> webrtc::ptr::BorrowedRc<RffiPeerConnection>;
 }
-pub type JavaCallContext = String;
+// pub type JavaCallContext = String;
+
+#[derive(Clone)]
+pub struct JavaCallContext {
+    hide_ip: bool,
+    ice_server: IceServer,
+    outgoing_audio_track: AudioTrack,
+    outgoing_video_track: VideoTrack,
+    incoming_video_sink: Box<dyn VideoSink>,
+}
+
+impl JavaCallContext {
+    pub fn new(
+        hide_ip: bool,
+        ice_server: IceServer,
+        outgoing_audio_track: AudioTrack,
+        outgoing_video_track: VideoTrack,
+        incoming_video_sink: Box<dyn VideoSink>,
+    ) -> Self {
+        Self {
+            hide_ip,
+            ice_server,
+            outgoing_audio_track,
+            outgoing_video_track,
+            incoming_video_sink,
+        }
+    }
+}
+
+impl PlatformItem for JavaCallContext {}
+
 
 pub struct JavaMediaStream {
 }
@@ -81,6 +112,38 @@ extern "C" fn dummyCreateConnection(_ptr: u64, call_id: CallId) -> i64 {
     info!("Dummy createConnection for {:?}", call_id);
     123456
 }
+
+#[derive(Clone, Default)]
+pub struct LastFramesVideoSink {
+    last_frame_by_track_id: Arc<Mutex<HashMap<u32, VideoFrame>>>,
+}
+
+impl VideoSink for LastFramesVideoSink {
+    fn on_video_frame(&self, track_id: u32, frame: VideoFrame) {
+        self.last_frame_by_track_id
+            .lock()
+            .unwrap()
+            .insert(track_id, frame);
+    }
+
+    fn box_clone(&self) -> Box<dyn VideoSink> {
+        Box::new(self.clone())
+    }
+}
+
+impl LastFramesVideoSink {
+    fn pop(&self, track_id: u32) -> Option<VideoFrame> {
+        self.last_frame_by_track_id
+            .lock()
+            .unwrap()
+            .remove(&track_id)
+    }
+
+    fn clear(&self) {
+        self.last_frame_by_track_id.lock().unwrap().clear();
+    }
+}
+
 
 #[repr(C)]
 #[allow(non_snake_case)]
