@@ -3,7 +3,7 @@ use core::slice;
 use std::time::Duration;
 use log::info;
 
-use crate::common::{CallDirection, CallId, CallMediaType, DeviceId, Result};
+use crate::common::{CallId, CallMediaType, DeviceId, Result};
 use crate::core::signaling;
 
 use crate::core::bandwidth_mode::BandwidthMode;
@@ -37,10 +37,15 @@ pub struct Opaque {
   pub rawdata: *const u8
 }
 
+impl Opaque {
+    pub fn new(d : ) {
+    }
+}
+
 #[repr(C)]
 pub struct IcePack {
-    rows: [byte_array;25],
-    length: usize
+    pub rows: [byte_array;25],
+    pub length: usize
 }
 
 #[no_mangle]
@@ -73,6 +78,7 @@ fn create_java_call_manager(platform: JavaPlatform) -> Result<*mut JavaCallManag
     Ok(Box::into_raw(call_manager_box) )
 }
 
+/*
 #[no_mangle]
 pub unsafe extern "C" fn set_first_callback(java_call_manager: u64, mycb: extern "C" fn(CallId, u64, CallDirection, CallMediaType)) {
     let call_manager = ptr_as_mut(java_call_manager as *mut JavaCallManager).unwrap() ;
@@ -83,6 +89,18 @@ pub unsafe extern "C" fn set_first_callback(java_call_manager: u64, mycb: extern
     // info!("Callback stored to {:?}", mycb);
     info!("Current Thread = {:?}", std::thread::current().id());
 }
+
+#[no_mangle]
+pub unsafe extern "C" fn set_first_callback(call_endpoint: u64, mycb: extern "C" fn(CallId, u64, CallDirection, CallMediaType)) {
+    let call_endpoint = ptr_as_mut(call_endpoint as *mut CallEndpoint).unwrap() ;
+    let mut java_platform = call_endpoint.platform();
+    // info!("Callback was to {:?}", java_platform.startCallback);
+    (*java_platform).startCallback = mycb;
+    info!("javaplatform = {:?}", java_platform);
+    // info!("Callback stored to {:?}", mycb);
+    info!("Current Thread = {:?}", std::thread::current().id());
+}
+*/
 
 #[no_mangle]
 pub unsafe extern "C" fn set_create_connection_callback(java_call_manager: u64, mycb: extern "C" fn(u64, CallId) ->i64 ) {
@@ -225,12 +243,12 @@ pub unsafe extern "C" fn received_ice(call_manager: u64, call_id: u64, sender_de
 #[derive(Clone, Debug)]
 #[repr(C)]
 pub struct byte_array {
-    bytes: *const u8,
-    length: usize
+    pub bytes: *const u8,
+    pub length: usize
 }
 
 #[repr(C)]
 pub struct byte_array_2d {
-    rows: [byte_array;10],
-    length: usize
+    pub rows: [byte_array;10],
+    pub length: usize
 }

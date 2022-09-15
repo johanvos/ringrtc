@@ -313,6 +313,7 @@ impl NativePlatform {
     }
 
     fn send_state(&self, peer_id: &str, call_id: CallId, state: CallState) -> Result<()> {
+info!("[JV] nativeplatform send_state called");
         self.state_handler
             .handle_call_state(peer_id, call_id, state)
     }

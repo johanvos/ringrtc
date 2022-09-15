@@ -1,3 +1,4 @@
+use core::slice;
 use lazy_static::lazy_static;
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -7,7 +8,7 @@ use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use crate::common::{CallId, CallMediaType, DeviceId, Result};
+use crate::common::{CallDirection, CallId, CallMediaType, DeviceId, Result};
 use crate::core::bandwidth_mode::BandwidthMode;
 use crate::core::call_manager::CallManager;
 use crate::core::group_call;
@@ -15,7 +16,8 @@ use crate::core::group_call::{GroupId, SignalingMessageUrgency};
 use crate::core::signaling;
 use crate::core::util::{ptr_as_mut, ptr_as_box};
 
-use crate::java::java::{MyKey, Opaque};
+use crate::java::java::{IcePack, MyKey, Opaque};
+use crate::java::java_platform::JavaPlatform;
 
 use crate::lite::{
     http,
@@ -96,21 +98,59 @@ pub enum Event {
 /// Wraps a [`std::sync::mpsc::Sender`] with a callback to report new events.
 #[derive(Clone)]
 struct EventReporter {
+    startCallback: extern "C" fn(CallId, u64, CallDirection, CallMediaType),
+    answerCallback: extern "C" fn(Opaque),
     sender: Sender<Event>,
     report: Arc<dyn Fn() + Send + Sync>,
 }
 
 impl EventReporter {
-    fn new(sender: Sender<Event>, report: impl Fn() + Send + Sync + 'static) -> Self {
+    fn new(startCallback: extern "C" fn(CallId, u64, CallDirection, CallMediaType),
+           answerCallback: extern "C" fn(Opaque),
+           sender: Sender<Event>, report: impl Fn() + Send + Sync + 'static) -> Self {
         Self {
+            startCallback,
+            answerCallback,
             sender,
             report: Arc::new(report),
         }
     }
 
+    fn startCall(&self, event: Event) -> Result<()> {
+        // (startCallback)(callId, 1, 0,0);
+        Ok(())
+    }
+
     fn send(&self, event: Event) -> Result<()> {
-        self.sender.send(event)?;
-        self.report();
+info!("[JV] Reporter, SEND event and sender = {:?}", self.sender);
+        match event  {
+            Event::SendSignaling(peer_id, maybe_device_id, call_id, signal) => {
+                info!("[JV] SendSignalingEvent");
+                match signal {
+                    signaling::Message::Answer(answer) => {
+                        info!("[JV] SendSignaling ANSWER Event");
+let c: &[u8] = &answer.opaque;
+                        let op = Opaque::new();
+                        op.opaque = answer.opaque;
+                        (self.answerCallback)(op);
+                    }
+                    _ => {
+                        info!("[JV] unknownSendSignalingEvent");
+                    }
+                }
+            }
+            Event::CallState(peer_id, call_id, CallState::Incoming(call_media_type)) => {
+                info!("[JV] CALLSTATEEVEMNT");
+                (self.startCallback)(call_id, 1,CallDirection::InComing, call_media_type);
+            }
+            _ => {
+                info!("[JV] unknownevent");
+            }
+        };
+        // self.sender.send(event)?;
+info!("[JV] Reporter done sending, now report");
+        // self.report();
+info!("[JV] Reporter done reporting");
         Ok(())
     }
 
@@ -174,6 +214,9 @@ impl CallStateHandler for EventReporter {
         call_id: CallId,
         call_state: CallState,
     ) -> Result<()> {
+info!("[JV] CallStatehandler, invoke self.send");
+        // self.startCall(call_id, remote_peer_id, call_state);
+        // Ok(())
         self.send(Event::CallState(
             remote_peer_id.to_string(),
             call_id,
@@ -248,11 +291,19 @@ pub struct CallEndpoint {
     outgoing_video_track: VideoTrack,
     incoming_video_sink: Box<LastFramesVideoSink>,
     peer_connection_factory: PeerConnectionFactory,
+    java_platform: JavaPlatform,
 }
 
 impl CallEndpoint {
-    fn new(
+
+    pub fn platform(&mut self) -> *mut JavaPlatform {
+        &mut(self.java_platform)
+    }
+
+    fn new<'a>(
         use_new_audio_device_module: bool,
+        startCallback: extern "C" fn(CallId, u64, CallDirection, CallMediaType),
+        answerCallback: extern "C" fn(Opaque)
     ) -> Result<Self> {
         // Relevant for both group calls and 1:1 calls
         let (events_sender, events_receiver) = channel::<Event>();
@@ -277,7 +328,8 @@ impl CallEndpoint {
 
         let event_reported = Arc::new(AtomicBool::new(false));
 
-        let event_reporter = EventReporter::new(events_sender, move || {
+        let java_platform = JavaPlatform::new();
+        let event_reporter = EventReporter::new(startCallback, answerCallback, events_sender, move || {
             // First check to see if an event has been reported recently.
             // We aren't using this for synchronizing any other memory state,
             // so Relaxed is good enough.
@@ -286,6 +338,14 @@ impl CallEndpoint {
                 return;
             }
          });
+
+        {
+            let event_reporter_for_logging = &mut *CURRENT_EVENT_REPORTER
+                .lock()
+                .expect("lock event reporter for logging");
+            *event_reporter_for_logging = Some(event_reporter.clone());
+        }
+
 
         // Only relevant for 1:1 calls
         let signaling_sender = Box::new(event_reporter.clone());
@@ -317,6 +377,7 @@ impl CallEndpoint {
             outgoing_video_track,
             incoming_video_sink,
             peer_connection_factory,
+            java_platform,
         })
     }
 }
@@ -363,15 +424,20 @@ pub unsafe extern "C" fn initRingRTC() -> i64 {
     1
 }
 
-fn create_call_endpoint(audio: bool) -> Result<*mut CallEndpoint> {
-    let call_endpoint = CallEndpoint::new(audio).unwrap();
+fn create_call_endpoint(audio: bool, 
+        startCall: extern "C" fn(CallId, u64, CallDirection, CallMediaType),
+        answerCall: extern "C" fn(Opaque)
+        ) -> Result<*mut CallEndpoint> {
+    let call_endpoint = CallEndpoint::new(audio, startCall, answerCall).unwrap();
     let call_endpoint_box = Box::new(call_endpoint);
     Ok(Box::into_raw(call_endpoint_box))
 }
 #[no_mangle]
-pub unsafe extern "C" fn createCallEndpoint() -> i64 {
+pub unsafe extern "C" fn createCallEndpoint(startCall: extern "C" fn(CallId, u64, CallDirection, CallMediaType),
+            answerCall: extern "C" fn(Opaque)
+        ) -> i64 {
     info!("Creating CallEndpoint");
-    let answer: i64 = match create_call_endpoint(false) {
+    let answer: i64 = match create_call_endpoint(false, startCall, answerCall) {
         Ok(v) => v as i64,
         Err(e) => {
             info!("Error creating callEndpoint: {}", e);
@@ -421,8 +487,34 @@ pub unsafe extern "C" fn receivedOffer(endpoint: i64, call_id: CallId,
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn proceedCall(endpoint: i64, call_id: CallId, bandwidth_mode: i32, audio_levels_interval_millis:i32) -> i64 {
+pub unsafe extern "C" fn receivedIce(endpoint: i64, call_id: u64, sender_device_id: DeviceId, icepack: IcePack) {
+    info!("JavaRing, received_ice with length = {}", icepack.length );
+    let callendpoint = ptr_as_mut(endpoint as *mut CallEndpoint).unwrap();
+    info!("Received offer, endpoint = {:?}", endpoint);
+    let call_id = CallId::from(call_id);
+    let mut ice_candidates = Vec::new();
+    for j in 0..icepack.length {
+        let row = &icepack.rows[j];
+        let bytes = slice::from_raw_parts(row.bytes, row.length);
+        let opaque = Vec::from(bytes);
+        ice_candidates.push(signaling::IceCandidate::new(opaque));
+    }
+    callendpoint.call_manager.received_ice(
+        call_id,
+        signaling::ReceivedIce {
+            ice: signaling::Ice {
+                candidates: ice_candidates,
+            },
+            sender_device_id,
+        },
+    );
+}
+
+
+#[no_mangle]
+pub unsafe extern "C" fn proceedCall(endpoint: i64, call_id: u64, bandwidth_mode: i32, audio_levels_interval_millis:i32) -> i64 {
     let endpoint = ptr_as_mut(endpoint as *mut CallEndpoint).unwrap();
+    let call_id = CallId::from(call_id);
     let ice_server = IceServer::new(String::from("iceuser"), String::from("icepwd"), Vec::new());
     let context = NativeCallContext::new(
         false,

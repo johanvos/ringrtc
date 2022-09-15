@@ -226,6 +226,7 @@ where
             let pin_stream = Pin::new(&mut self.event_stream);
             match ready!(pin_stream.poll_next(cx)) {
                 Some((call, event)) => {
+info!("[JV] FSM got event {}!", event);
                     let state = call.state()?;
                     if !event.is_frequent() {
                         info!("state: {}, event: {}", state, event);

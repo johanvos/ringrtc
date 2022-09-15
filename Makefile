@@ -109,7 +109,7 @@ java:
 		./bin/build-java -r ; \
 	else \
 		echo "java: Debug build" ; \
-		./bin/build-java -d ; \
+		./bin/build-java -r ; \
 	fi
 
 PHONY += clean

@@ -1197,6 +1197,7 @@ info!("[JV] conn.start_incoming99");
                 buffered_candidates.push(candidate);
             }
             let buffered_count_after = buffered_candidates.len();
+info!("[JV] connection, buffer_local_ice_candidates, cbefore = {}, cafter = {}", buffered_count_before, buffered_count_after);
             (buffered_count_before, buffered_count_after)
         };
 
