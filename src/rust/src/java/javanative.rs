@@ -95,17 +95,21 @@ pub enum Event {
     },
 }
 
+
 /// Wraps a [`std::sync::mpsc::Sender`] with a callback to report new events.
 #[derive(Clone)]
-struct EventReporter {
-    startCallback: extern "C" fn(CallId, u64, CallDirection, CallMediaType),
-    answerCallback: extern "C" fn(Opaque),
+#[repr(C)]
+#[allow(non_snake_case)]
+pub struct EventReporter {
+#[allow(non_snake_case)]
+    pub startCallback: unsafe extern "C" fn(CallId, u64, CallDirection, CallMediaType),
+    pub answerCallback: unsafe extern "C" fn(Opaque),
     sender: Sender<Event>,
     report: Arc<dyn Fn() + Send + Sync>,
 }
 
 impl EventReporter {
-    fn new(startCallback: extern "C" fn(CallId, u64, CallDirection, CallMediaType),
+    pub fn new(startCallback: extern "C" fn(CallId, u64, CallDirection, CallMediaType),
            answerCallback: extern "C" fn(Opaque),
            sender: Sender<Event>, report: impl Fn() + Send + Sync + 'static) -> Self {
         Self {
@@ -114,6 +118,10 @@ impl EventReporter {
             sender,
             report: Arc::new(report),
         }
+    }
+ #[no_mangle]
+    pub unsafe extern "C" fn setMyStartCallCallback(&mut self, func: unsafe extern "C" fn(CallId, u64, CallDirection, CallMediaType)) {
+        self.startCallback = func;
     }
 
     fn startCall(&self, event: Event) -> Result<()> {
@@ -129,10 +137,10 @@ info!("[JV] Reporter, SEND event and sender = {:?}", self.sender);
                 match signal {
                     signaling::Message::Answer(answer) => {
                         info!("[JV] SendSignaling ANSWER Event");
-let c: &[u8] = &answer.opaque;
-                        let op = Opaque::new();
-                        op.opaque = answer.opaque;
-                        (self.answerCallback)(op);
+                        let op : Opaque = Opaque::new(answer.opaque);
+                        unsafe {
+                            (self.answerCallback)(op);
+                        }
                     }
                     _ => {
                         info!("[JV] unknownSendSignalingEvent");
@@ -141,7 +149,9 @@ let c: &[u8] = &answer.opaque;
             }
             Event::CallState(peer_id, call_id, CallState::Incoming(call_media_type)) => {
                 info!("[JV] CALLSTATEEVEMNT");
-                (self.startCallback)(call_id, 1,CallDirection::InComing, call_media_type);
+                unsafe {
+                    (self.startCallback)(call_id, 1,CallDirection::InComing, call_media_type);
+                }
             }
             _ => {
                 info!("[JV] unknownevent");
@@ -284,6 +294,19 @@ impl GroupUpdateHandler for EventReporter {
     }
 }
 
+#[repr(C)]
+#[allow(non_snake_case)]
+pub struct EndpointCallback {
+    pub answerCallback: unsafe extern "C" fn (opaque: Opaque)
+}
+
+impl EndpointCallback {
+    #[no_mangle]
+    pub unsafe extern "C" fn setAnswerCallCallback(&mut self, func: unsafe extern "C" fn(Opaque)) {
+    }
+
+}
+
 pub struct CallEndpoint {
     call_manager: CallManager<NativePlatform>,
     outgoing_audio_track: AudioTrack,
@@ -299,6 +322,7 @@ impl CallEndpoint {
     pub fn platform(&mut self) -> *mut JavaPlatform {
         &mut(self.java_platform)
     }
+
 
     fn new<'a>(
         use_new_audio_device_module: bool,

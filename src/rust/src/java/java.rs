@@ -1,6 +1,7 @@
 extern crate log;
 use core::slice;
 use std::time::Duration;
+use std::convert::TryInto;
 use log::info;
 
 use crate::common::{CallId, CallMediaType, DeviceId, Result};
@@ -34,11 +35,17 @@ pub struct MyKey {
 pub struct Opaque {
   pub len: usize,
   pub data: [u8; 256],
-  pub rawdata: *const u8
 }
 
 impl Opaque {
-    pub fn new(d : ) {
+    pub fn new(vector: Vec<u8> ) -> Self {
+        let vlen = vector.len();
+        // odata = vector.try_into().unwrap();
+        let mut vdata= [0; 256];
+        for i in 0..vlen {
+            vdata[i] = vector[i];
+        }
+        Opaque{len:vlen, data:vdata}
     }
 }
 
