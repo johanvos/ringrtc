@@ -143,7 +143,7 @@ info!("[JV] Reporter, SEND event and sender = {:?}", self.sender);
                         }
                     }
                     _ => {
-                        info!("[JV] unknownSendSignalingEvent");
+                        info!("[JV] unknownSendSignalingEvent WHICH IS WHAT WE NEED TO FIX NOW!");
                     }
                 }
             }
@@ -559,5 +559,13 @@ pub unsafe extern "C" fn proceedCall(endpoint: i64, call_id: u64, bandwidth_mode
         audio_levels_interval);
 
     147 
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn signalMessageSent(endpoint: i64, call_id: CallId) -> i64 {
+    let callendpoint = ptr_as_mut(endpoint as *mut CallEndpoint).unwrap();
+    info!("Received signalmessagesent, endpoint = {:?}", endpoint);
+    callendpoint.call_manager.message_sent(call_id);
+    135
 }
 

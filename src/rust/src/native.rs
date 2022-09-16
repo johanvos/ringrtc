@@ -354,6 +354,7 @@ info!("[JV] nativeplatform send_state called");
         receiver_device_id: Option<DeviceId>,
         msg: signaling::Message,
     ) -> Result<()> {
+info!("[JV] Send via signaling sender");
         self.signaling_sender
             .send_signaling(recipient_id, call_id, receiver_device_id, msg)
     }

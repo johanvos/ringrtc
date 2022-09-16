@@ -1969,6 +1969,7 @@ info!("Ready to return");
             match self.message_queue.lock() {
                 Ok(mut message_queue) => {
                     message_queue.queue.push_back(message_item);
+info!("[JV] this message is now on the queue");
                 }
                 Err(e) => {
                     return Err(e);
