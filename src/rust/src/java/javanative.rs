@@ -142,6 +142,10 @@ info!("[JV] Reporter, SEND event and sender = {:?}", self.sender);
                             (self.answerCallback)(op);
                         }
                     }
+                    signaling::Message::Ice(ice) => {
+                        let icepack: IcePack = IcePack::new(ice.candidates);
+                        (self.iceUpdateCallback)(icepack);
+                    }
                     _ => {
                         info!("[JV] unknownSendSignalingEvent WHICH IS WHAT WE NEED TO FIX NOW!");
                     }

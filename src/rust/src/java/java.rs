@@ -55,6 +55,16 @@ pub struct IcePack {
     pub length: usize
 }
 
+impl IcePack {
+    pub fn new(vector: Vec<signaling::IceCandidate>) -> Self {
+        let vlen = vector.len();
+        IcePack {
+            rows: [],
+            length: vlen
+        }
+    }
+}
+
 #[no_mangle]
 pub unsafe extern "C" fn createJavaPlatform() -> *mut JavaPlatform {
     init_logging();
