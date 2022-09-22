@@ -32,6 +32,7 @@ pub struct MyKey {
 }
 
 #[repr(C)]
+#[derive(Clone, Copy)]
 pub struct Opaque {
   pub len: usize,
   pub data: [u8; 256],
@@ -47,6 +48,11 @@ impl Opaque {
         }
         Opaque{len:vlen, data:vdata}
     }
+
+    pub fn empty() -> Self {
+        let data = [0;256];
+        Opaque{len: 0, data: data}
+    }
 }
 
 #[repr(C)]
@@ -58,8 +64,17 @@ pub struct IcePack {
 impl IcePack {
     pub fn new(vector: Vec<signaling::IceCandidate>) -> Self {
         let vlen = vector.len();
+        // let mut myrows = [Opaque::empty(); 25];
+        let mut myrows: [byte_array; 25] = [byte_array::empty(); 25];
+        for i in 0..25 {
+            if (i < vlen) {
+                myrows[i] = byte_array::from_data(vector[i].opaque.as_ptr(), vector[i].opaque.len());
+            } else {
+                myrows[i] = byte_array::new(Vec::new());
+            }
+        }
         IcePack {
-            rows: [],
+            rows: myrows,
             length: vlen
         }
     }
@@ -257,11 +272,25 @@ pub unsafe extern "C" fn received_ice(call_manager: u64, call_id: u64, sender_de
     );
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Copy, Debug)]
 #[repr(C)]
 pub struct byte_array {
     pub bytes: *const u8,
     pub length: usize
+}
+
+impl byte_array {
+    pub fn from_data(data: *const u8, len: usize) -> Self {
+        byte_array{bytes: data, length: len}
+    }
+    pub fn new(vector: Vec<u8> ) -> Self {
+        let bar = vector.as_ptr();
+        byte_array{bytes: bar, length: vector.len()}
+    }
+    pub fn empty() -> Self {
+        let bar = Vec::new().as_ptr();
+        byte_array{bytes: bar, length: 0}
+    }
 }
 
 #[repr(C)]

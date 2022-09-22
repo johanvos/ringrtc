@@ -104,6 +104,7 @@ pub struct EventReporter {
 #[allow(non_snake_case)]
     pub startCallback: unsafe extern "C" fn(CallId, u64, CallDirection, CallMediaType),
     pub answerCallback: unsafe extern "C" fn(Opaque),
+    pub iceUpdateCallback: unsafe extern "C" fn(IcePack),
     sender: Sender<Event>,
     report: Arc<dyn Fn() + Send + Sync>,
 }
@@ -111,10 +112,12 @@ pub struct EventReporter {
 impl EventReporter {
     pub fn new(startCallback: extern "C" fn(CallId, u64, CallDirection, CallMediaType),
            answerCallback: extern "C" fn(Opaque),
+           iceUpdateCallback: extern "C" fn(IcePack),
            sender: Sender<Event>, report: impl Fn() + Send + Sync + 'static) -> Self {
         Self {
             startCallback,
             answerCallback,
+            iceUpdateCallback,
             sender,
             report: Arc::new(report),
         }
@@ -143,8 +146,11 @@ info!("[JV] Reporter, SEND event and sender = {:?}", self.sender);
                         }
                     }
                     signaling::Message::Ice(ice) => {
+                        info!("[JV] SendSignaling ICE Event");
                         let icepack: IcePack = IcePack::new(ice.candidates);
-                        (self.iceUpdateCallback)(icepack);
+                        unsafe {
+                            (self.iceUpdateCallback)(icepack);
+                        }
                     }
                     _ => {
                         info!("[JV] unknownSendSignalingEvent WHICH IS WHAT WE NEED TO FIX NOW!");
@@ -301,12 +307,16 @@ impl GroupUpdateHandler for EventReporter {
 #[repr(C)]
 #[allow(non_snake_case)]
 pub struct EndpointCallback {
-    pub answerCallback: unsafe extern "C" fn (opaque: Opaque)
+    pub answerCallback: unsafe extern "C" fn (opaque: Opaque),
+    pub iceUpdateCallback: unsafe extern "C" fn (icePack: IcePack),
 }
 
 impl EndpointCallback {
     #[no_mangle]
     pub unsafe extern "C" fn setAnswerCallCallback(&mut self, func: unsafe extern "C" fn(Opaque)) {
+    }
+    #[no_mangle]
+    pub unsafe extern "C" fn seticeUpdateCallCallback(&mut self, func: unsafe extern "C" fn(IcePack)) {
     }
 
 }
@@ -331,7 +341,8 @@ impl CallEndpoint {
     fn new<'a>(
         use_new_audio_device_module: bool,
         startCallback: extern "C" fn(CallId, u64, CallDirection, CallMediaType),
-        answerCallback: extern "C" fn(Opaque)
+        answerCallback: extern "C" fn(Opaque),
+        iceUpdateCallback: extern "C" fn(IcePack)
     ) -> Result<Self> {
         // Relevant for both group calls and 1:1 calls
         let (events_sender, events_receiver) = channel::<Event>();
@@ -357,7 +368,7 @@ impl CallEndpoint {
         let event_reported = Arc::new(AtomicBool::new(false));
 
         let java_platform = JavaPlatform::new();
-        let event_reporter = EventReporter::new(startCallback, answerCallback, events_sender, move || {
+        let event_reporter = EventReporter::new(startCallback, answerCallback, iceUpdateCallback, events_sender, move || {
             // First check to see if an event has been reported recently.
             // We aren't using this for synchronizing any other memory state,
             // so Relaxed is good enough.
@@ -454,18 +465,21 @@ pub unsafe extern "C" fn initRingRTC() -> i64 {
 
 fn create_call_endpoint(audio: bool, 
         startCall: extern "C" fn(CallId, u64, CallDirection, CallMediaType),
-        answerCall: extern "C" fn(Opaque)
+        answerCall: extern "C" fn(Opaque),
+        iceUpdateCall: extern "C" fn(IcePack)
         ) -> Result<*mut CallEndpoint> {
-    let call_endpoint = CallEndpoint::new(audio, startCall, answerCall).unwrap();
+    let call_endpoint = CallEndpoint::new(audio, startCall, answerCall, iceUpdateCall).unwrap();
     let call_endpoint_box = Box::new(call_endpoint);
     Ok(Box::into_raw(call_endpoint_box))
 }
 #[no_mangle]
-pub unsafe extern "C" fn createCallEndpoint(startCall: extern "C" fn(CallId, u64, CallDirection, CallMediaType),
-            answerCall: extern "C" fn(Opaque)
+pub unsafe extern "C" fn createCallEndpoint(
+            startCall: extern "C" fn(CallId, u64, CallDirection, CallMediaType),
+            answerCall: extern "C" fn(Opaque),
+            iceUpdateCall: extern "C" fn(IcePack)
         ) -> i64 {
     info!("Creating CallEndpoint");
-    let answer: i64 = match create_call_endpoint(false, startCall, answerCall) {
+    let answer: i64 = match create_call_endpoint(false, startCall, answerCall, iceUpdateCall) {
         Ok(v) => v as i64,
         Err(e) => {
             info!("Error creating callEndpoint: {}", e);

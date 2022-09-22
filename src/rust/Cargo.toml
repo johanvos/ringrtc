@@ -28,6 +28,7 @@ path = "src/gctc.rs"
 required-features = ["native", "http"]
 
 [dependencies]
+backtrace = "0.3"
 regex-aot         = { path = "regex-aot" }
 
 aes               = { version = "0.7", features = ["ctr"] }

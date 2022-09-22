@@ -5,6 +5,8 @@
 
 //! A peer-to-peer connection interface.
 
+// use backtrace::Backtrace;
+
 use std::fmt;
 use std::net::SocketAddr;
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
