@@ -27,6 +27,7 @@ use crate::native::{
     CallState, CallStateHandler, EndReason, GroupUpdate, GroupUpdateHandler, NativeCallContext,
     NativePlatform, PeerId, SignalingSender,
 };
+use crate::webrtc::logging;
 use crate::webrtc::media::{
     AudioTrack, VideoFrame, VideoPixelFormat, VideoSink, VideoSource, VideoTrack,
 };
@@ -41,6 +42,17 @@ fn init_logging() {
         .filter(None, log::LevelFilter::Debug)
         .init();
     println!("LOGINIT done");
+    // let is_first_time_initializing_logger = log::set_logger(&LOG).is_ok();
+    let is_first_time_initializing_logger = true;
+    println!("EXTRALOG? {}", is_first_time_initializing_logger);
+    if is_first_time_initializing_logger {
+        // log::set_max_level(log::LevelFilter::Debug);
+        logging::set_logger(log::LevelFilter::Warn);
+        println!("EXTRALOG? yes");
+    }
+
+
+    logging::set_logger(log::LevelFilter::Trace);
     info!("INFO logging enabled");
 }
 
@@ -577,6 +589,14 @@ pub unsafe extern "C" fn proceedCall(endpoint: i64, call_id: u64, bandwidth_mode
         audio_levels_interval);
 
     147 
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn acceptCall(endpoint: i64, call_id: u64) -> i64 {
+    let endpoint = ptr_as_mut(endpoint as *mut CallEndpoint).unwrap();
+    let call_id = CallId::from(call_id);
+    endpoint.call_manager.accept_call(call_id);
+    573
 }
 
 #[no_mangle]

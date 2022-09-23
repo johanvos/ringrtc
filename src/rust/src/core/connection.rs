@@ -755,6 +755,7 @@ info!("[JV] conn.start_incoming1, peer_connection = {:?}", peer_connection);
                 return Err(RingRtcError::UnknownSignaledProtocolVersion.into());
             };
 
+info!("[JV] connX, pk = {:?}", remote_public_key);
 info!("[JV] conn.start_incoming3, offer = {:?}", offer);
             let (local_secret, local_public_key) = generate_local_secret_and_public_key()?;
 info!("[JV] conn.start_incoming4");
@@ -772,6 +773,7 @@ info!("[JV] conn.start_incoming4");
                         caller_identity_key,
                         callee_identity_key,
                     )?;
+info!("jv, callerIK = {:?}, calle IK = {:?}, local_secret = ?, remoPub = {:?}", caller_identity_key, callee_identity_key, remote_public_key);
                     offer.disable_dtls_and_set_srtp_key(&offer_key)?;
                     Some(answer_key)
                 }

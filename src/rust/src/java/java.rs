@@ -28,7 +28,7 @@ pub fn init_logging() {
 
 #[repr(C)]
 pub struct MyKey {
-  pub data: [u8; 8]
+  pub data: [u8; 32]
 }
 
 #[repr(C)]
