@@ -104,6 +104,7 @@ public class TringServiceImpl implements TringService {
     @Override
     public void proceed(long callId, String iceUser, String icePwd, List<byte[]> ice) {
         MemorySegment icePack = toJByteArray2D(scope, ice);
+        tringlib_h.setOutgoingAudioEnabled(callEndpoint, true);
         tringlib_h.proceedCall(callEndpoint, callId, 0, 0,
                 toJString(scope, iceUser), toJString(scope, icePwd), icePack);
     }

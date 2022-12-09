@@ -1,6 +1,8 @@
 #![allow(unused_parens)]
 
 use crate::core::signaling;
+use crate::webrtc::peer_connection_factory::AudioDevice;
+
 use core::slice;
 use std::fmt;
 
@@ -16,7 +18,41 @@ impl JString {
         let answer = unsafe { String::from_raw_parts(self.buff, self.len, self.len) };
         answer
     }
+
+/*
+    pub fn from_string(src: String) -> Self {
+        let string_len = src.len();
+        let mut string_bytes = src.as_bytes().as_mut_ptr();
+        Self {
+            len: string_len,
+            buff: string_bytes
+        }
+    }
+*/
 }
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct RString<'a> {
+    len: usize,
+    buff: *const u8,
+    phantom: std::marker::PhantomData<&'a u8>,
+}
+
+impl<'a> RString<'a> {
+
+    pub fn from_string(src: String) -> Self {
+        let string_len = src.len();
+        let mut string_bytes = src.as_bytes().as_ptr();
+        Self {
+            len: string_len,
+            buff: string_bytes,
+            phantom: std::marker::PhantomData,
+        }
+    }
+}
+
+
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
 pub struct JArrayByte {
@@ -162,3 +198,50 @@ struct Buffer {
     data: *mut u8,
     len: usize,
 }
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct TringDevice<'a> {
+    index: u32,
+    name: RString<'a>,
+    unique_id: RString<'a>,
+    int_key: RString<'a>,
+}
+
+impl<'a> TringDevice<'a> {
+    pub fn empty() -> Self {
+        let name = RString::from_string("empty".to_string());
+        let unique_id = RString::from_string("empty".to_string());
+        let int_key = RString::from_string("empty".to_string());
+        Self {
+            index: 99,
+            name: name,
+            unique_id: unique_id,
+            int_key: int_key
+        }
+    }
+
+    pub fn from_audio_device(index: u32, src: AudioDevice) -> Self {
+        let src_name = RString::from_string(src.name);
+        let src_unique_id = RString::from_string(src.unique_id);
+        let src_int_key = RString::from_string(src.i18n_key);
+        Self {
+            index: index,
+            name: src_name,
+            unique_id: src_unique_id,
+            int_key: src_int_key,
+        }
+    }
+    pub fn from_fields(index: u32, src_name:String, src_unique_id:String, src_i18n_key:String) -> Self {
+        let src_name = RString::from_string(src_name);
+        let src_unique_id = RString::from_string(src_unique_id);
+        let src_int_key = RString::from_string(src_i18n_key);
+        Self {
+            index: index,
+            name: src_name,
+            unique_id: src_unique_id,
+            int_key: src_int_key,
+        }
+    }
+}
+

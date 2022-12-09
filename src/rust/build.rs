@@ -27,7 +27,7 @@ fn main() {
             .with_crate(crate_dir)
             .with_language(cbindgen::Language::C)
             .generate()
-            .expect("uuunable to generate bindings")
+            .expect("uunable to generate bindings")
             .write_to_file("tringlib.h");
     }
     let target = env::var("TARGET").unwrap();
