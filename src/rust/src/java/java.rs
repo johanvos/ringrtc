@@ -735,7 +735,7 @@ pub unsafe extern "C" fn signalMessageSent(endpoint: i64, call_id: CallId) -> i6
 
 #[no_mangle]
 #[allow(non_snake_case)]
-pub unsafe extern "C" fn getAudioInputs(idx: u32, endpoint: i64) -> TringDevice<'static> {
+pub unsafe extern "C" fn getAudioInputs(endpoint: i64, idx: u32) -> TringDevice<'static> {
     let callendpoint = ptr_as_mut(endpoint as *mut CallEndpoint).unwrap();
     let devices = callendpoint
             .peer_connection_factory
