@@ -18,7 +18,9 @@ use crate::core::group_call::{GroupId, SignalingMessageUrgency};
 use crate::core::signaling;
 use crate::core::util::ptr_as_mut;
 
-use crate::java::jtypes::{JArrayByte, JArrayByte2D, JByteArray, JByteArray2D, JString, TringDevice};
+use crate::java::jtypes::{
+    JArrayByte, JArrayByte2D, JByteArray, JByteArray2D, JString, TringDevice,
+};
 
 use crate::lite::http;
 use crate::lite::sfu::UserId;
@@ -33,7 +35,9 @@ use crate::webrtc::media::{
 
 use crate::webrtc::peer_connection::AudioLevel;
 
-use crate::webrtc::peer_connection_factory::{self as pcf, AudioDevice, IceServer, PeerConnectionFactory};
+use crate::webrtc::peer_connection_factory::{
+    self as pcf, AudioDevice, IceServer, PeerConnectionFactory,
+};
 use crate::webrtc::peer_connection_observer::NetworkRoute;
 
 fn init_logging() {
@@ -738,12 +742,18 @@ pub unsafe extern "C" fn signalMessageSent(endpoint: i64, call_id: CallId) -> i6
 pub unsafe extern "C" fn getAudioInputs(endpoint: i64, idx: u32) -> TringDevice<'static> {
     let callendpoint = ptr_as_mut(endpoint as *mut CallEndpoint).unwrap();
     let devices = callendpoint
-            .peer_connection_factory
-            .get_audio_recording_devices().unwrap();
+        .peer_connection_factory
+        .get_audio_recording_devices()
+        .unwrap();
     // let mut answer: [TringDevice;16] = [TringDevice::empty();16];
     let mut answer: TringDevice = TringDevice::empty();
     for (i, device) in devices.iter().enumerate() {
-        let wd = TringDevice::from_fields(i as u32, device.name.clone(), device.unique_id.clone(), device.i18n_key.clone());
+        let wd = TringDevice::from_fields(
+            i as u32,
+            device.name.clone(),
+            device.unique_id.clone(),
+            device.i18n_key.clone(),
+        );
         if (i as u32 == idx) {
             answer = wd;
         }
@@ -754,8 +764,6 @@ pub unsafe extern "C" fn getAudioInputs(endpoint: i64, idx: u32) -> TringDevice<
 
 #[no_mangle]
 pub unsafe extern "C" fn setAudioInput(endpoint: i64, index: u16) -> i64 {
-// getAudioInputs(endpoint);
-// getAudioOutputs(endpoint);
     let endpoint = ptr_as_mut(endpoint as *mut CallEndpoint).unwrap();
     info!("Have to set audio_recordig_device to {}", index);
     endpoint
@@ -768,13 +776,13 @@ pub unsafe extern "C" fn setAudioInput(endpoint: i64, index: u16) -> i64 {
 pub unsafe extern "C" fn getAudioOutputs(endpoint: i64) -> i64 {
     let callendpoint = ptr_as_mut(endpoint as *mut CallEndpoint).unwrap();
     let devices = callendpoint
-            .peer_connection_factory
-            .get_audio_playout_devices();
-    
+        .peer_connection_factory
+        .get_audio_playout_devices();
+
     for device in devices.iter() {
         info!("OUTDEVICE = {:#?}", device);
     }
-1
+    1
 }
 
 #[no_mangle]

@@ -75,27 +75,16 @@ public class TringServiceImpl implements TringService {
     }
     
     private void processAudioInputs() {
-        System.err.println("GOT CE");
+        LOG.warning("Process Audio Inputs asked, not supported!");
         MemorySegment audioInputs = tringlib_h.getAudioInputs(scope, callEndpoint,0);
-        System.err.println("GOT AI");
         MemorySegment name = TringDevice.name$slice(audioInputs);
-        System.err.println("GOT NAME");
         int namelen = (int)RString.len$get(name);
-        System.err.println("LEN = "+namelen);
         MemoryAddress namebuff = RString.buff$get(name);
         MemorySegment ofAddress = MemorySegment.ofAddress(namebuff, namelen, scope);
         ByteBuffer bb = ofAddress.asByteBuffer();
         byte[] bname = new byte[namelen];
         bb.get(bname, 0, (int)namelen);
-    //   byte[] bname =  bb.array();
-    //    byte[] bname = ofAddress.toArray(ValueLayout.JAVA_BYTE);
-//        byte[] bname = new byte[(int)namelen];
-//        for (int i = 0; i < namelen; i++) {
-//            bname[i] = namebuff.get(ValueLayout.JAVA_BYTE, i);
-//        }
-        System.err.println("NAME =  "+java.util.Arrays.toString(bname));
         String myname = new String(bname);
-        System.err.println("hence, myname = "+myname);
     }
 
     @Override

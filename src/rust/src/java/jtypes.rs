@@ -19,16 +19,16 @@ impl JString {
         answer
     }
 
-/*
-    pub fn from_string(src: String) -> Self {
-        let string_len = src.len();
-        let mut string_bytes = src.as_bytes().as_mut_ptr();
-        Self {
-            len: string_len,
-            buff: string_bytes
+    /*
+        pub fn from_string(src: String) -> Self {
+            let string_len = src.len();
+            let mut string_bytes = src.as_bytes().as_mut_ptr();
+            Self {
+                len: string_len,
+                buff: string_bytes
+            }
         }
-    }
-*/
+    */
 }
 
 #[repr(C)]
@@ -40,7 +40,6 @@ pub struct RString<'a> {
 }
 
 impl<'a> RString<'a> {
-
     pub fn from_string(src: String) -> Self {
         let string_len = src.len();
         let mut string_bytes = src.as_bytes().as_ptr();
@@ -51,7 +50,6 @@ impl<'a> RString<'a> {
         }
     }
 }
-
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
@@ -217,7 +215,7 @@ impl<'a> TringDevice<'a> {
             index: 99,
             name: name,
             unique_id: unique_id,
-            int_key: int_key
+            int_key: int_key,
         }
     }
 
@@ -232,7 +230,12 @@ impl<'a> TringDevice<'a> {
             int_key: src_int_key,
         }
     }
-    pub fn from_fields(index: u32, src_name:String, src_unique_id:String, src_i18n_key:String) -> Self {
+    pub fn from_fields(
+        index: u32,
+        src_name: String,
+        src_unique_id: String,
+        src_i18n_key: String,
+    ) -> Self {
         let src_name = RString::from_string(src_name);
         let src_unique_id = RString::from_string(src_unique_id);
         let src_int_key = RString::from_string(src_i18n_key);
@@ -244,4 +247,3 @@ impl<'a> TringDevice<'a> {
         }
     }
 }
-
