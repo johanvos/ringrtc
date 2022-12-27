@@ -857,7 +857,7 @@ pub unsafe extern "C" fn fillLargeArray(endpoint: i64, mybuffer: *mut u8) -> i64
     let zero = *mybuffer.offset(0);
     let first = *mybuffer.offset(1);
     let second = *mybuffer.offset(12);
-info!("VAL 1 = {} and VAL2 = {}", first, second);
+    info!("VAL 1 = {} and VAL2 = {}", first, second);
     *mybuffer.offset(12) = 13;
     1
 }
@@ -872,7 +872,6 @@ pub unsafe extern "C" fn fillRemoteVideoFrame(endpoint: i64, mybuffer: *mut u8, 
         let width: u32 = frame.width();
         let height: u32 = frame.height();
         let myframe: &mut [u8] = slice::from_raw_parts_mut(mybuffer, len);
-        // let myframe: &mut [u8] = &mut [0; 5120000];
         frame.to_rgba(myframe);
         info!(
             "Frame0 = {}, w = {}, h = {}",

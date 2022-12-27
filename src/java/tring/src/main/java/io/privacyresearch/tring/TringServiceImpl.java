@@ -17,6 +17,7 @@ import java.util.logging.Logger;
 
 public class TringServiceImpl implements TringService {
 
+    static final int BANDWIDTH_QUALITY_HIGH = 2;
     private static final TringService instance = new TringServiceImpl();
     private static boolean nativeSupport = false;
     private static long nativeVersion = 0;
@@ -120,7 +121,7 @@ public class TringServiceImpl implements TringService {
     public void proceed(long callId, String iceUser, String icePwd, List<byte[]> ice) {
         MemorySegment icePack = toJByteArray2D(scope, ice);
         tringlib_h.setOutgoingAudioEnabled(callEndpoint, true);
-        tringlib_h.proceedCall(callEndpoint, callId, 2, 0,
+        tringlib_h.proceedCall(callEndpoint, callId, BANDWIDTH_QUALITY_HIGH, 0,
                 toJString(scope, iceUser), toJString(scope, icePwd), icePack);
     }
 
@@ -172,20 +173,17 @@ public class TringServiceImpl implements TringService {
         int CAP = 1000000;
         for (int i = 0; i < 1000; i++) {
             try (MemorySession rscope = MemorySession.openConfined()) {
-                
-            
-            MemorySegment segment = MemorySegment.allocateNative(CAP, scope);
-            tringlib_h.fillLargeArray(123, segment);
-            ByteBuffer bb = segment.asByteBuffer();
-            byte[] bar = new byte[CAP];
-            bb.get(bar, 0, CAP);
-            LOG.info("Got Array " + i + " sized " + bar.length);
+                MemorySegment segment = MemorySegment.allocateNative(CAP, scope);
+                tringlib_h.fillLargeArray(123, segment);
+                ByteBuffer bb = segment.asByteBuffer();
+                byte[] bar = new byte[CAP];
+                bb.get(bar, 0, CAP);
+                LOG.info("Got Array " + i + " sized " + bar.length);
             }
         }
-    //    LOG.info("bar[0] = " + bar[0] + " and bar12 = " + bar[12]);
         LOG.info("DONE");
     }
-    
+
     @Override
     public TringFrame getRemoteVideoFrame(boolean skip) {
         int CAP = 5000000;
