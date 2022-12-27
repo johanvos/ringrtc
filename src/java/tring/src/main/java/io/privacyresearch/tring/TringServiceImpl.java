@@ -166,6 +166,7 @@ public class TringServiceImpl implements TringService {
         return callId;
     }
 
+    // for testing only
     public void setArray() {
         LOG.info("SET ARRAY");
         int CAP = 1000000;
@@ -174,8 +175,6 @@ public class TringServiceImpl implements TringService {
                 
             
             MemorySegment segment = MemorySegment.allocateNative(CAP, scope);
-         //       System.err.println("Loaded? "+segment.isLoaded()+" and mapped? "+segment.isMapped());
-     //       MemorySegment segment = scope.allocate(CAP);
             tringlib_h.fillLargeArray(123, segment);
             ByteBuffer bb = segment.asByteBuffer();
             byte[] bar = new byte[CAP];
@@ -192,57 +191,19 @@ public class TringServiceImpl implements TringService {
         int CAP = 5000000;
         try (MemorySession rscope = MemorySession.openShared()) {
             MemorySegment segment = MemorySegment.allocateNative(CAP, rscope);
-            //long res = tringlib_h.fillLargeArray(callEndpoint, segment);
-            LOG.info("Go with large memory segment");
             long res = tringlib_h.fillRemoteVideoFrame(callEndpoint, segment, CAP);
             if (res != 0) {
                 int w = (int) (res >> 16);
                 int h = (int) (res % (1 <<16));
                 byte[] raw = new byte[w * h * 4];
-                LOG.info("Got frame with w = " + w + " and h = " + h+" and res = "+res);
                 ByteBuffer bb = segment.asByteBuffer();
                 bb.get(raw);
                 TringFrame answer = new TringFrame(w, h, -1, raw);
                 return answer;
             }
         } catch (Throwable t) {
-            System.err.println("THROWING!");
             t.printStackTrace();
         }
-        return null;
-    }
-    
-    // @Override
-    public TringFrame oldgetRemoteVideoFrame(boolean skip) {
-        LOG.info("Get remote videoframe");
-        try {
-            LOG.info("pass control to tringlib, callEndpoint = "+callEndpoint);
-            long a = tringlib_h.retrieveRemoteVideoFrame(callEndpoint);
-            LOG.info("Got control back from tringlib, a = " + a);
-            int i = 0;
-            while (a == 0) {
-                Thread.sleep(50);
-                a = tringlib_h.retrieveRemoteVideoFrame(callEndpoint);
-                i++;
-                if (i > 40) return null;
-            }
-            LOG.info("Asked for a remote frame");
-            synchronized (frameQueue) {
-                TringFrame frame = frameQueue.poll();
-                if (frame == null) {
-                    frameQueue.wait(15000);
-                    frame = frameQueue.poll();
-                }
-                LOG.info("Got a remote frame? " + frame);
-                if (frame != null) {
-                    return frame;
-                }
-            }
-
-        } catch (InterruptedException ex) {
-            LOG.log(Level.SEVERE, null, ex);
-        }
-        LOG.info("Didn't receive a video frame from the other side in 15 seconds, return null");
         return null;
     }
 
@@ -420,6 +381,7 @@ byte[] destArr = new byte[(int)len];
         return seg.address();
     }
     
+    @Deprecated
     class VideoFrameCallbackImpl implements createCallEndpoint$videoFrameCallback {
         @Override
         public void apply(MemoryAddress opaque, int w, int h, long size) {

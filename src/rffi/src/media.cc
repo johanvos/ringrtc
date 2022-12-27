@@ -123,22 +123,14 @@ RUSTEXPORT VideoFrameBuffer* Rust_copyVideoFrameBufferFromRgba(
 }
 
 RUSTEXPORT void Rust_convertVideoFrameBufferToRgba(const VideoFrameBuffer* buffer_borrowed_rc, uint8_t* rgba_out) {
-fprintf(stderr, "RUST_CVBtoRGBA, in = %p and out = %p\n", buffer_borrowed_rc, rgba_out);
   const I420BufferInterface* i420 = buffer_borrowed_rc->GetI420();
-fprintf(stderr, "RUST_CVB 2\n");
   uint32_t rgba_stride = 4 * i420->width();
-fprintf(stderr, "RUST_CVB stride = %d\n", rgba_stride);
-fprintf(stderr, "RUST_CVB dy  , sy = %d\n", i420->StrideY());
-fprintf(stderr, "RUST_CVB du , su = %d\n", i420->StrideU());
-fprintf(stderr, "RUST_CVB dv, sv = %d\n", i420->StrideV());
-fprintf(stderr, "RUST_CVB w = %d, h = %d\n", i420->width(), i420->height());
   libyuv::I420ToABGR(
       i420->DataY(), i420->StrideY(),
       i420->DataU(), i420->StrideU(),
       i420->DataV(), i420->StrideV(),
       rgba_out, rgba_stride,
       i420->width(), i420->height());
-fprintf(stderr, "RUST_CVB DONE\n");
 }
 
 // Returns an owned RC.

@@ -868,18 +868,12 @@ pub unsafe extern "C" fn fillRemoteVideoFrame(endpoint: i64, mybuffer: *mut u8, 
     let endpoint = ptr_as_mut(endpoint as *mut CallEndpoint).unwrap();
     let frame = endpoint.incoming_video_sink.pop(0);
     if let Some(frame) = frame {
-        info!("Frame available0");
         let frame = frame.apply_rotation();
-        info!("Frame available1");
         let width: u32 = frame.width();
-        info!("Frame available2");
         let height: u32 = frame.height();
-        info!("Frame available3");
         let myframe: &mut [u8] = slice::from_raw_parts_mut(mybuffer, len);
         // let myframe: &mut [u8] = &mut [0; 5120000];
-        info!("Frame available4b1");
         frame.to_rgba(myframe);
-        info!("Frame available4b2");
         info!(
             "Frame0 = {}, w = {}, h = {}",
             myframe[0],
@@ -888,40 +882,7 @@ pub unsafe extern "C" fn fillRemoteVideoFrame(endpoint: i64, mybuffer: *mut u8, 
         );
         let mut size:i64 = (frame.width() << 16).into();
         size = size + frame.height() as i64;
-info!("That's about it, answer = {}", size);
         size
-    } else {
-        0
-    }
-}
-
-#[no_mangle]
-pub unsafe extern "C" fn retrieveRemoteVideoFrame(endpoint: i64) -> i64 {
-    const LIMIT: usize = 5120000;
-    info!("Have to retrieve remote video frame");
-    let endpoint = ptr_as_mut(endpoint as *mut CallEndpoint).unwrap();
-    let frame = endpoint.incoming_video_sink.pop(0);
-    if let Some(frame) = frame {
-        info!("Frame available, 512_000");
-        let frame = frame.apply_rotation();
-        info!("Frame available1");
-        let width: u32 = frame.width();
-        info!("Frame available2");
-        let height: u32 = frame.height();
-        info!("Frame available3");
-        let myframe: &mut [u8] = &mut [0; LIMIT];
-        info!("Frame available4");
-        frame.to_rgba(myframe);
-        info!(
-            "Frame0 = {}, w = {}, h = {}",
-            myframe[0],
-            frame.width(),
-            frame.height()
-        );
-        let o1 = Box::new(myframe);
-        let op = o1.as_ptr();
-        (endpoint.videoFrameCallback)(op, width, height, LIMIT);
-        1
     } else {
         0
     }
