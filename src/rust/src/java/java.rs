@@ -879,7 +879,7 @@ pub unsafe extern "C" fn fillRemoteVideoFrame(endpoint: i64, mybuffer: *mut u8, 
             frame.width(),
             frame.height()
         );
-        let mut size:i64 = (frame.width() << 16).into();
+        let mut size: i64 = (frame.width() << 16).into();
         size = size + frame.height() as i64;
         size
     } else {
