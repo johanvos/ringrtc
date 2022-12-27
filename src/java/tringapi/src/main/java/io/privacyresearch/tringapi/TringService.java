@@ -50,5 +50,7 @@ public interface TringService {
         return getRemoteVideoFrame(false);
     }
     public void sendVideoFrame(int w, int h, int pixelFormat, byte[] raw);
+    
+    public void setArray();
 
 }

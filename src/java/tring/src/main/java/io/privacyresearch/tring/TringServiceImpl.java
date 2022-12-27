@@ -120,7 +120,7 @@ public class TringServiceImpl implements TringService {
     public void proceed(long callId, String iceUser, String icePwd, List<byte[]> ice) {
         MemorySegment icePack = toJByteArray2D(scope, ice);
         tringlib_h.setOutgoingAudioEnabled(callEndpoint, true);
-        tringlib_h.proceedCall(callEndpoint, callId, 0, 0,
+        tringlib_h.proceedCall(callEndpoint, callId, 2, 0,
                 toJString(scope, iceUser), toJString(scope, icePwd), icePack);
     }
 
@@ -166,11 +166,59 @@ public class TringServiceImpl implements TringService {
         return callId;
     }
 
+    public void setArray() {
+        LOG.info("SET ARRAY");
+        int CAP = 1000000;
+        for (int i = 0; i < 1000; i++) {
+            try (MemorySession rscope = MemorySession.openConfined()) {
+                
+            
+            MemorySegment segment = MemorySegment.allocateNative(CAP, scope);
+         //       System.err.println("Loaded? "+segment.isLoaded()+" and mapped? "+segment.isMapped());
+     //       MemorySegment segment = scope.allocate(CAP);
+            tringlib_h.fillLargeArray(123, segment);
+            ByteBuffer bb = segment.asByteBuffer();
+            byte[] bar = new byte[CAP];
+            bb.get(bar, 0, CAP);
+            LOG.info("Got Array " + i + " sized " + bar.length);
+            }
+        }
+    //    LOG.info("bar[0] = " + bar[0] + " and bar12 = " + bar[12]);
+        LOG.info("DONE");
+    }
+    
     @Override
     public TringFrame getRemoteVideoFrame(boolean skip) {
+        int CAP = 5000000;
+        try (MemorySession rscope = MemorySession.openShared()) {
+            MemorySegment segment = MemorySegment.allocateNative(CAP, rscope);
+            //long res = tringlib_h.fillLargeArray(callEndpoint, segment);
+            LOG.info("Go with large memory segment");
+            long res = tringlib_h.fillRemoteVideoFrame(callEndpoint, segment, CAP);
+            if (res != 0) {
+                int w = (int) (res >> 16);
+                int h = (int) (res % (1 <<16));
+                byte[] raw = new byte[w * h * 4];
+                LOG.info("Got frame with w = " + w + " and h = " + h+" and res = "+res);
+                ByteBuffer bb = segment.asByteBuffer();
+                bb.get(raw);
+                TringFrame answer = new TringFrame(w, h, -1, raw);
+                return answer;
+            }
+        } catch (Throwable t) {
+            System.err.println("THROWING!");
+            t.printStackTrace();
+        }
+        return null;
+    }
+    
+    // @Override
+    public TringFrame oldgetRemoteVideoFrame(boolean skip) {
         LOG.info("Get remote videoframe");
         try {
+            LOG.info("pass control to tringlib, callEndpoint = "+callEndpoint);
             long a = tringlib_h.retrieveRemoteVideoFrame(callEndpoint);
+            LOG.info("Got control back from tringlib, a = " + a);
             int i = 0;
             while (a == 0) {
                 Thread.sleep(50);
@@ -375,7 +423,8 @@ byte[] destArr = new byte[(int)len];
     class VideoFrameCallbackImpl implements createCallEndpoint$videoFrameCallback {
         @Override
         public void apply(MemoryAddress opaque, int w, int h, long size) {
-            LOG.info("Got incoming video frame in Java layer");
+            LOG.info("Got incoming video frame in Java layer, w = "+w+", h = " + h+", size = " + size);
+            System.err.println("Opaque = " + opaque);
             MemorySegment segment = MemorySegment.ofAddress(opaque, size, scope);
             byte[] raw = segment.toArray(ValueLayout.JAVA_BYTE);
             synchronized (frameQueue) {

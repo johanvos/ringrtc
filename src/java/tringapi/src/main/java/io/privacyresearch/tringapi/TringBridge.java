@@ -87,4 +87,7 @@ public class TringBridge {
         service.sendVideoFrame(width, height, pixelFormat, raw);
     }
 
+    public void setArray() {
+        service.setArray();
+    }
 }
