@@ -25,6 +25,9 @@ public interface TringService {
     public void receivedOffer(String peerId, long callId, int senderDeviceId, int receiverDeviceId,
             byte[] senderKey, byte[] receiverKey, byte[] opaque);
 
+    public void receivedOpaqueMessage(byte[] senderUuid, int senderDeviceId, 
+            int localDeviceId, byte[] opaque, long age);
+    
     public void receivedAnswer(String peerId, long callId, int senderDeviceId,
             byte[] senderKey, byte[] receiverKey, byte[] opaque);
     public long startOutgoingCall(long callId, String peerId, int localDeviceId, boolean enableVideo);

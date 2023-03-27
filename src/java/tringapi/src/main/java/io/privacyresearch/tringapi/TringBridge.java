@@ -66,6 +66,11 @@ public class TringBridge {
         service.receivedOffer(peerId, callId, senderDeviceId, receiverDeviceId, senderKey, receiverKey, opaque);
     }
 
+    public void receivedOpaqueMessage(byte[] uuid, int senderDeviceId, int receiverDeviceId,
+            byte[] opaque, long ageMessage) {
+        service.receivedOpaqueMessage(uuid, senderDeviceId, receiverDeviceId, opaque, ageMessage);
+    }
+
     public void receivedAnswer(String peerId, long callId, int receiverDeviceId,
             byte[] senderKey, byte[] receiverKey, byte[] opaque) {
         service.receivedAnswer(peerId, callId, receiverDeviceId, senderKey, receiverKey, opaque);

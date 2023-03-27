@@ -100,6 +100,17 @@ public class TringServiceImpl implements TringService {
                 toJByteArray(scope, opaque),
                 ageSec);
     }
+    
+    @Override
+    public void receivedOpaqueMessage(byte[] senderUuid, int senderDeviceId, 
+            int localDeviceId, byte[] opaque, long age) {
+        tringlib_h.receivedOpaqueMessage(callEndpoint, 
+                toJByteArray(scope, senderUuid),
+                senderDeviceId,
+                localDeviceId,
+                toJByteArray(scope, opaque),
+                age);
+    }
 
     @Override
     public void receivedAnswer(String peerId, long callId, int senderDeviceId,

@@ -584,6 +584,22 @@ pub unsafe extern "C" fn receivedOffer(
 }
 
 #[no_mangle]
+pub unsafe extern "C" fn receivedOpaqueMessage(
+    endpoint: i64,
+    sender_juuid: JByteArray,
+    sender_device_id: DeviceId,
+    local_device_id: DeviceId,
+    opaque: JByteArray,
+    message_age_sec: u64) -> i64 {
+    info!("Create opaque message!");
+    let message = opaque.to_vec_u8();
+    let sender_uuid = sender_juuid.to_vec_u8();
+    let callendpoint = ptr_as_mut(endpoint as *mut CallEndpoint).unwrap();
+    callendpoint.call_manager.received_call_message(sender_uuid, sender_device_id, local_device_id, message, Duration::from_secs(message_age_sec));
+1
+}
+
+#[no_mangle]
 pub unsafe extern "C" fn receivedAnswer(
     endpoint: i64,
     peerId: JString,
