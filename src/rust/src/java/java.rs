@@ -1,6 +1,7 @@
 #![allow(unused_parens)]
 
 use std::collections::HashMap;
+use std::convert::TryInto;
 
 use std::slice;
 use std::sync::atomic::AtomicBool;
@@ -112,8 +113,17 @@ struct EventReporter {
     pub answerCallback: unsafe extern "C" fn(JArrayByte),
     pub offerCallback: unsafe extern "C" fn(JArrayByte),
     pub iceUpdateCallback: unsafe extern "C" fn(JArrayByte),
+    pub genericCallback: unsafe extern "C" fn(i32, JArrayByte),
     sender: Sender<Event>,
     report: Arc<dyn Fn() + Send + Sync>,
+}
+
+fn string_to_bytes(v:String) -> Vec<u8> {
+    let mut answer:Vec<u8> = Vec::new();
+    let ul = v.len();
+    answer.extend_from_slice(&ul.to_le_bytes());
+    answer.extend_from_slice(v.as_bytes());
+    answer
 }
 
 impl EventReporter {
@@ -122,6 +132,7 @@ impl EventReporter {
         answerCallback: extern "C" fn(JArrayByte),
         offerCallback: extern "C" fn(JArrayByte),
         iceUpdateCallback: extern "C" fn(JArrayByte),
+        genericCallback: extern "C" fn(i32, JArrayByte),
         sender: Sender<Event>,
         report: impl Fn() + Send + Sync + 'static,
     ) -> Self {
@@ -130,6 +141,7 @@ impl EventReporter {
             answerCallback,
             offerCallback,
             iceUpdateCallback,
+            genericCallback,
             sender,
             report: Arc::new(report),
         }
@@ -230,7 +242,106 @@ impl EventReporter {
                     }
                 }
             }
+            Event::SendHttpRequest {
+                request_id,
+                request:
+                    http::Request {
+                        method,
+                        url,
+                        headers,
+                        body,
+                    },
+            } => {
+                info!("NYI SendHttpReq");
+                info!("Request id = {}", request_id);
+                info!("Requestmethod = {:?}", method);
+                info!("Requesturl = {:?}", url);
+                info!("Requestheaders = {:?}", headers);
+                info!("Requestbody = {:?}", body);
+                let mut payload:Vec<u8> = Vec::new();
+                let rid = request_id as i32;
+                payload.extend_from_slice(&rid.to_le_bytes());
 
+                payload.push(method as u8);
+
+                payload.extend(string_to_bytes(url));
+
+                let mut hdr:Vec<u8> = Vec::new();
+                for (name, value) in headers.iter() {
+                    hdr.extend(string_to_bytes(name.to_string()));
+                    hdr.extend(string_to_bytes(value.to_string()));
+                }
+                let hdrlen = hdr.len();
+                payload.extend_from_slice(&hdrlen.to_le_bytes());
+                payload.extend(hdr);
+
+                let bl = body.as_ref().map_or(0, |v| v.len());
+                payload.extend_from_slice(&bl.to_le_bytes());
+                payload.extend(body.unwrap_or_default());
+                let data = JArrayByte::new(payload);
+                unsafe {
+                    (self.genericCallback)(2, data);
+                }
+            }
+            Event::GroupUpdate(GroupUpdate::RequestMembershipProof(client_id)) => {
+                info!("NYI RMP");
+            }
+            Event::GroupUpdate(GroupUpdate::RequestGroupMembers(client_id)) => {
+                info!("NYI RGM");
+            }
+            Event::GroupUpdate(GroupUpdate::ConnectionStateChanged(
+                client_id,
+                connection_state,
+            )) => {
+                info!("NYI CSTATEChanged");
+            }
+            Event::GroupUpdate(GroupUpdate::NetworkRouteChanged(client_id, network_route)) => {
+                info!("NYI NetworkRouteChanged");
+            }
+            Event::GroupUpdate(GroupUpdate::JoinStateChanged(client_id, join_state)) => {
+                info!("NYI JoinStatesChanged");
+            }
+            Event::GroupUpdate(GroupUpdate::RemoteDeviceStatesChanged(
+                client_id,
+                remote_device_states,
+            )) => {
+                info!("NYI RemoteDeviceStatesChanged");
+            }
+            Event::GroupUpdate(GroupUpdate::PeekChanged {
+                client_id,
+                peek_info,
+            }) => {
+                info!("NYI PeekChanged");
+            }
+            Event::GroupUpdate(GroupUpdate::PeekResult {
+                request_id,
+                peek_result,
+            }) => {
+                info!("NYI PeekResult");
+            }
+            Event::GroupUpdate(GroupUpdate::Ended(client_id, reason)) => {
+                info!("NYI ENDED");
+            }
+            Event::GroupUpdate(GroupUpdate::Ring {
+                group_id,
+                ring_id,
+                sender,
+                update,
+            }) => {
+                info!("[JV] GroupUpdate, gid = {:?}, ringid = {:?}, sender = {:?}, update = {:?}", group_id, ring_id, sender, update);
+                let mut payload:Vec<u8> = Vec::new();
+                let glen: i32 = group_id.len().try_into().unwrap();
+                payload.extend_from_slice(&glen.to_le_bytes());
+                payload.extend(group_id);
+                let rid: i64 = ring_id.into();
+                payload.extend_from_slice(&rid.to_le_bytes());
+                payload.extend(sender);
+                payload.push(update as u8);
+                let data = JArrayByte::new(payload);
+                unsafe {
+                    (self.genericCallback)(1, data);
+                }
+            }
             _ => {
                 info!("[JV] unknownevent");
             }
@@ -362,6 +473,7 @@ impl http::Delegate for EventReporter {
 
 impl GroupUpdateHandler for EventReporter {
     fn handle_group_update(&self, update: GroupUpdate) -> Result<()> {
+        info!("Handle group update {:?}", update);
         self.send(Event::GroupUpdate(update))?;
         Ok(())
     }
@@ -390,6 +502,7 @@ impl CallEndpoint {
         answerCallback: extern "C" fn(JArrayByte),
         offerCallback: extern "C" fn(JArrayByte),
         iceUpdateCallback: extern "C" fn(JArrayByte),
+        genericCallback: extern "C" fn(i32, JArrayByte),
         videoFrameCallback: extern "C" fn(*const u8, u32, u32, size_t),
     ) -> Result<Self> {
         // Relevant for both group calls and 1:1 calls
@@ -413,6 +526,7 @@ impl CallEndpoint {
             answerCallback,
             offerCallback,
             iceUpdateCallback,
+            genericCallback,
             events_sender,
             move || {
                 info!("[JV] EVENT_REPORTER, NYI");
@@ -510,6 +624,7 @@ pub unsafe extern "C" fn createCallEndpoint(
     answerCallback: extern "C" fn(JArrayByte),
     offerCallback: extern "C" fn(JArrayByte),
     iceUpdateCallback: extern "C" fn(JArrayByte),
+    genericCallback: extern "C" fn(i32, JArrayByte),
     videoFrameCallback: extern "C" fn(*const u8, u32, u32, size_t),
 ) -> i64 {
     let call_endpoint = CallEndpoint::new(
@@ -518,6 +633,7 @@ pub unsafe extern "C" fn createCallEndpoint(
         answerCallback,
         offerCallback,
         iceUpdateCallback,
+        genericCallback,
         videoFrameCallback,
     )
     .unwrap();
@@ -901,4 +1017,16 @@ pub unsafe extern "C" fn fillRemoteVideoFrame(endpoint: i64, mybuffer: *mut u8, 
     } else {
         0
     }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn peekGroupCall(endpoint: i64,
+    mp: JByteArray,
+) -> i64 {
+    let membership_proof = mp.to_vec_u8();
+    let endpoint = ptr_as_mut(endpoint as *mut CallEndpoint).unwrap();
+    info!("peekGroupCall, not fully implemented");
+    let sfu = String::from("https://sfu.voip.signal.org");
+    endpoint.call_manager.peek_group_call(1, sfu, membership_proof, Vec::new());
+    1
 }
