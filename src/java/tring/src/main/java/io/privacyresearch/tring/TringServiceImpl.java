@@ -2,17 +2,14 @@ package io.privacyresearch.tring;
 
 import io.privacyresearch.tringapi.TringFrame;
 import io.privacyresearch.tringapi.TringService;
-import java.lang.foreign.Addressable;
-import java.lang.foreign.MemoryAddress;
-import java.lang.foreign.MemorySegment;
-import java.lang.foreign.MemorySession;
-import java.lang.foreign.ValueLayout;
+import java.lang.foreign.*;
 import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.LinkedBlockingQueue;
-import java.util.logging.Level;
 import java.util.logging.Logger;
 
 public class TringServiceImpl implements TringService {
@@ -22,7 +19,8 @@ public class TringServiceImpl implements TringService {
     private static boolean nativeSupport = false;
     private static long nativeVersion = 0;
 
-    private MemorySession scope;
+    private Arena arena;
+
     private long callEndpoint;
     private io.privacyresearch.tringapi.TringApi api;
     private long activeCallId;
@@ -67,25 +65,27 @@ public class TringServiceImpl implements TringService {
     }
 
     private void initiate() {
-        scope = MemorySession.openShared();
-        tringlib_h.initRingRTC(toJString(scope, "Hello from Java"));
+        arena = Arena.openShared();
+
+        //arena = MemorySession.openShared();
+        tringlib_h.initRingRTC(toJString(arena, "Hello from Java"));
         this.callEndpoint = tringlib_h.createCallEndpoint(createStatusCallback(), 
                 createAnswerCallback(), createOfferCallback(), createIceUpdateCallback(),
-        createVideoFrameCallback());
+        createGenericCallback(), createVideoFrameCallback());
         
     }
     
     private void processAudioInputs() {
         LOG.warning("Process Audio Inputs asked, not supported!");
-        MemorySegment audioInputs = tringlib_h.getAudioInputs(scope, callEndpoint,0);
+        MemorySegment audioInputs = tringlib_h.getAudioInputs(arena, callEndpoint,0);
         MemorySegment name = TringDevice.name$slice(audioInputs);
         int namelen = (int)RString.len$get(name);
-        MemoryAddress namebuff = RString.buff$get(name);
-        MemorySegment ofAddress = MemorySegment.ofAddress(namebuff, namelen, scope);
-        ByteBuffer bb = ofAddress.asByteBuffer();
-        byte[] bname = new byte[namelen];
-        bb.get(bname, 0, (int)namelen);
-        String myname = new String(bname);
+        MemorySegment namebuff = RString.buff$get(name);
+//        MemorySegment ofAddress = MemorySegment.ofAddress(namebuff, namelen, arena);
+//        ByteBuffer bb = ofAddress.asByteBuffer();
+//        byte[] bname = new byte[namelen];
+//        bb.get(bname, 0, (int)namelen);
+//        String myname = new String(bname);
     }
 
     @Override
@@ -95,9 +95,9 @@ public class TringServiceImpl implements TringService {
         long ageSec = 0;
         this.activeCallId = callId;
         LOG.info("Pass received offer to tringlib");
-        tringlib_h.receivedOffer(callEndpoint, toJString(scope, peerId), callId, mediaType, senderDeviceId,
-                receiverDeviceId, toJByteArray(scope, senderKey), toJByteArray(scope, receiverKey),
-                toJByteArray(scope, opaque),
+        tringlib_h.receivedOffer(callEndpoint, toJString(arena, peerId), callId, mediaType, senderDeviceId,
+                receiverDeviceId, toJByteArray(arena, senderKey), toJByteArray(arena, receiverKey),
+                toJByteArray(arena, opaque),
                 ageSec);
     }
     
@@ -105,10 +105,10 @@ public class TringServiceImpl implements TringService {
     public void receivedOpaqueMessage(byte[] senderUuid, int senderDeviceId, 
             int localDeviceId, byte[] opaque, long age) {
         tringlib_h.receivedOpaqueMessage(callEndpoint, 
-                toJByteArray(scope, senderUuid),
+                toJByteArray(arena, senderUuid),
                 senderDeviceId,
                 localDeviceId,
-                toJByteArray(scope, opaque),
+                toJByteArray(arena, opaque),
                 age);
     }
 
@@ -119,26 +119,26 @@ public class TringServiceImpl implements TringService {
         long ageSec = 0;
         this.activeCallId = callId;
         LOG.info("Pass received answer to tringlib");
-        tringlib_h.receivedAnswer(callEndpoint, toJString(scope, peerId), callId, senderDeviceId,
-                toJByteArray(scope, senderKey), toJByteArray(scope, receiverKey),
-                toJByteArray(scope, opaque));
+        tringlib_h.receivedAnswer(callEndpoint, toJString(arena, peerId), callId, senderDeviceId,
+                toJByteArray(arena, senderKey), toJByteArray(arena, receiverKey),
+                toJByteArray(arena, opaque));
     }
 
     public void setSelfUuid(String uuid) {
-        tringlib_h.setSelfUuid(callEndpoint, toJString(scope, uuid));
+        tringlib_h.setSelfUuid(callEndpoint, toJString(arena, uuid));
     }
 
     @Override
     public void proceed(long callId, String iceUser, String icePwd, List<byte[]> ice) {
-        MemorySegment icePack = toJByteArray2D(scope, ice);
+        MemorySegment icePack = toJByteArray2D(arena, ice);
         tringlib_h.setOutgoingAudioEnabled(callEndpoint, true);
         tringlib_h.proceedCall(callEndpoint, callId, BANDWIDTH_QUALITY_HIGH, 0,
-                toJString(scope, iceUser), toJString(scope, icePwd), icePack);
+                toJString(arena, iceUser), toJString(arena, icePwd), icePack);
     }
 
     @Override
     public void receivedIce(long callId, int senderDeviceId, List<byte[]> ice) {
-        MemorySegment icePack = toJByteArray2D(scope, ice);
+        MemorySegment icePack = toJByteArray2D(arena, ice);
         tringlib_h.receivedIce(callEndpoint, callId, senderDeviceId, icePack);
     }
 
@@ -174,7 +174,7 @@ public class TringServiceImpl implements TringService {
         LOG.info("Tring will start outgoing call to "+peerId+" with localDevice "+localDeviceId+" and enableVideo = "+enableVideo);
         tringlib_h.setAudioInput(callEndpoint, (short)0);
         tringlib_h.setAudioOutput(callEndpoint, (short)0);
-        tringlib_h.createOutgoingCall(callEndpoint, toJString(scope, peerId), enableVideo, localDeviceId, callId);
+        tringlib_h.createOutgoingCall(callEndpoint, toJString(arena, peerId), enableVideo, localDeviceId, callId);
         return callId;
     }
 
@@ -183,8 +183,8 @@ public class TringServiceImpl implements TringService {
         LOG.info("SET ARRAY");
         int CAP = 1000000;
         for (int i = 0; i < 1000; i++) {
-            try (MemorySession rscope = MemorySession.openConfined()) {
-                MemorySegment segment = MemorySegment.allocateNative(CAP, scope);
+            try (Arena rarena = Arena.openConfined()) {
+                MemorySegment segment = MemorySegment.allocateNative(CAP, rarena.scope());
                 tringlib_h.fillLargeArray(123, segment);
                 ByteBuffer bb = segment.asByteBuffer();
                 byte[] bar = new byte[CAP];
@@ -198,8 +198,8 @@ public class TringServiceImpl implements TringService {
     @Override
     public TringFrame getRemoteVideoFrame(boolean skip) {
         int CAP = 5000000;
-        try (MemorySession rscope = MemorySession.openShared()) {
-            MemorySegment segment = MemorySegment.allocateNative(CAP, rscope);
+        try (Arena rarena = Arena.openShared()) {
+            MemorySegment segment = MemorySegment.allocateNative(CAP, rarena.scope());
             long res = tringlib_h.fillRemoteVideoFrame(callEndpoint, segment, CAP);
             if (res != 0) {
                 int w = (int) (res >> 16);
@@ -223,13 +223,18 @@ public class TringServiceImpl implements TringService {
 
     @Override
     public void sendVideoFrame(int w, int h, int pixelFormat, byte[] raw) {
-        try ( MemorySession session = MemorySession.openConfined()) {
+        try ( Arena session = Arena.openConfined()) {
             MemorySegment buff = session.allocateArray(ValueLayout.JAVA_BYTE, raw);
             tringlib_h.sendVideoFrame(callEndpoint, w, h, pixelFormat, buff);
         }
     }
-    
-    static MemorySegment toJByteArray2D(MemorySession ms, List<byte[]> rows) {
+
+    @Override
+    public void peekGroupCall(byte[] membershipProof) {
+        tringlib_h.peekGroupCall(callEndpoint, toJByteArray(arena, membershipProof));
+    }
+
+    static MemorySegment toJByteArray2D(Arena ms, List<byte[]> rows) {
         MemorySegment answer = JByteArray2D.allocate(ms);
         JByteArray2D.len$set(answer, rows.size());
         MemorySegment rowsSegment = JByteArray2D.buff$slice(answer);
@@ -241,16 +246,16 @@ public class TringServiceImpl implements TringService {
         return answer;
     }
 
-    static MemorySegment toJByteArray(MemorySession ms, byte[] bytes) {
+    static MemorySegment toJByteArray(Arena ms, byte[] bytes) {
         MemorySegment answer = JByteArray.allocate(ms);
         JByteArray.len$set(answer, bytes.length);
-        MemorySegment byteBuffer = MemorySegment.allocateNative(bytes.length, ms);
+        MemorySegment byteBuffer = MemorySegment.allocateNative(bytes.length, ms.scope());
         MemorySegment.copy(bytes, 0, byteBuffer, ValueLayout.JAVA_BYTE, 0, bytes.length);
-        JByteArray.buff$set(answer, byteBuffer.address());
+        JByteArray.buff$set(answer, byteBuffer);
         return answer;
     }
     
-    static byte[] fromJArrayByte(MemorySession ms, MemorySegment jArrayByte) {
+    static byte[] fromJArrayByte(Arena ms, MemorySegment jArrayByte) {
         int len = (int)JArrayByte.len$get(jArrayByte);
         MemorySegment dataSegment = JArrayByte.data$slice(jArrayByte).asSlice(0, len);
         byte[] destArr = new byte[len];
@@ -259,63 +264,61 @@ public class TringServiceImpl implements TringService {
         return destArr;
     }
 
-    static byte[] fromJByteArray(MemorySession ms, MemorySegment jByteArray) {
+    static byte[] fromJByteArray(Arena ms, MemorySegment jByteArray) {
         long len = JByteArray.len$get(jByteArray);
-        System.err.println("Need to read byte array with "+len+" bytes");
+        System.err.println("Need to read byte array with " + len + " bytes");
         for (int j = 0; j < 16; j++) {
             byte b = jByteArray.get(ValueLayout.JAVA_BYTE, j);
-            System.err.println("b["+j+"] = "+b);
+            System.err.println("b[" + j + "] = " + b);
         }
-       //VarHandle buffHandle = JByteArray.$struct$LAYOUT.varHandle(long.class, MemoryLayout.PathElement.groupElement("buff"));
+        //VarHandle buffHandle = JByteArray.$struct$LAYOUT.varHandle(long.class, MemoryLayout.PathElement.groupElement("buff"));
 
-        MemoryAddress pointer = JByteArray.buff$get(jByteArray);
-        System.err.println("pointer at "+ pointer.address());
-MemorySegment segment = MemorySegment.ofAddress(pointer, len, ms);
-byte[] destArr = new byte[(int)len];
+        MemorySegment pointer = JByteArray.buff$get(jByteArray);
+        MemorySegment segment = pointer;
+//        System.err.println("pointer at " + pointer.address());
+//        MemorySegment segment = MemorySegment.ofAddress(pointer, len, ms);
+        byte[] destArr = new byte[(int) len];
         MemorySegment dstSeq = MemorySegment.ofArray(destArr);
         dstSeq.copyFrom(segment);
-        System.err.println("After copy, destArr = "+java.util.Arrays.toString(destArr));
-        
-        
-        
+        System.err.println("After copy, destArr = " + java.util.Arrays.toString(destArr));
+
         for (int j = 0; j < len; j++) {
             byte b = segment.get(ValueLayout.JAVA_BYTE, j);
             System.err.println("Bb[" + j + "] = " + b);
 
         }
 
-
-   //     MemoryAddress pointer = ptr.get(ValueLayout.ADDRESS, 0);
-        System.err.println("ptr = "+pointer+", val = " + pointer.toRawLongValue());
-        System.err.println("ptr address = "+pointer.address());
-        byte[] data = new byte[(int)len];
-        for (int i =0; i < data.length; i++) {
+        //     MemoryAddress pointer = ptr.get(ValueLayout.ADDRESS, 0);
+     //   System.err.println("ptr = " + pointer + ", val = " + pointer.toRawLongValue());
+        System.err.println("ptr address = " + pointer.address());
+        byte[] data = new byte[(int) len];
+        for (int i = 0; i < data.length; i++) {
             data[i] = pointer.get(ValueLayout.JAVA_BYTE, i);
         }
-        System.err.println("got data: "+java.util.Arrays.toString(data));
-        byte p0 = pointer.address().get(ValueLayout.JAVA_BYTE, 0);
-        byte p1 = pointer.address().get(ValueLayout.JAVA_BYTE, 1);
-        byte p8 = pointer.address().get(ValueLayout.JAVA_BYTE, 8);
-        System.err.println("p0 = "+p0+", p1 = "+p1+", p8 = "+p8);
+        System.err.println("got data: " + java.util.Arrays.toString(data));
+        byte p0 = pointer.get(ValueLayout.JAVA_BYTE, 0);
+        byte p1 = pointer.get(ValueLayout.JAVA_BYTE, 1);
+        byte p8 = pointer.get(ValueLayout.JAVA_BYTE, 8);
+        System.err.println("p0 = " + p0 + ", p1 = " + p1 + ", p8 = " + p8);
 //        MemorySegment byteSegment = JByteArray.ofAddress(pointer, ms);
 //        byte[] data = byteSegment.toArray(ValueLayout.JAVA_BYTE);
         return data;
     }
 
-    static MemorySegment toJString(MemorySession ms, String src) {
+    static MemorySegment toJString(Arena ms, String src) {
         MemorySegment answer = JString.allocate(ms);
         byte[] bytes = src.getBytes();
         JString.len$set(answer, bytes.length);
-        MemorySegment byteBuffer = MemorySegment.allocateNative(bytes.length, ms);
+        MemorySegment byteBuffer = MemorySegment.allocateNative(bytes.length, ms.scope());
         MemorySegment.copy(bytes, 0, byteBuffer, ValueLayout.JAVA_BYTE, 0, bytes.length);
-        JString.buff$set(answer, byteBuffer.address());
+        JString.buff$set(answer, byteBuffer);
         return answer;
     }
 
-    Addressable createStatusCallback() {
+    MemorySegment createStatusCallback() {
         StatusCallbackImpl sci = new StatusCallbackImpl();
-        MemorySegment seg = createCallEndpoint$statusCallback.allocate(sci, scope);
-        return seg.address();
+        MemorySegment seg = createCallEndpoint$statusCallback.allocate(sci, arena.scope());
+        return seg;
     }
 
 
@@ -328,17 +331,17 @@ byte[] destArr = new byte[(int)len];
         }
     }
     
-    Addressable createAnswerCallback() {
+    MemorySegment createAnswerCallback() {
         AnswerCallbackImpl sci = new AnswerCallbackImpl();
-        MemorySegment seg = createCallEndpoint$answerCallback.allocate(sci, scope);
-        return seg.address();
+        MemorySegment seg = createCallEndpoint$answerCallback.allocate(sci, arena.scope());
+        return seg;
     }
     
     class AnswerCallbackImpl implements createCallEndpoint$answerCallback {
         @Override
         public void apply(MemorySegment opaque) {
             System.err.println("TRINGBRIDGE, send answer!");
-            byte[] bytes = fromJArrayByte(scope, opaque);
+            byte[] bytes = fromJArrayByte(arena, opaque);
             System.err.println("TRING, bytes to send = "+java.util.Arrays.toString(bytes));
             api.answerCallback(bytes);
             System.err.println("TRING, answer sent");
@@ -347,16 +350,16 @@ byte[] destArr = new byte[(int)len];
         }
     }
     
-    Addressable createOfferCallback() {
+    MemorySegment createOfferCallback() {
         OfferCallbackImpl sci = new OfferCallbackImpl();
-        MemorySegment seg = createCallEndpoint$offerCallback.allocate(sci, scope);
-        return seg.address();
+        MemorySegment seg = createCallEndpoint$offerCallback.allocate(sci, arena.scope());
+        return seg;
     }
 
     class OfferCallbackImpl implements createCallEndpoint$offerCallback {
         @Override
         public void apply(MemorySegment opaque) {
-            byte[] bytes = fromJArrayByte(scope, opaque);
+            byte[] bytes = fromJArrayByte(arena, opaque);
             api.offerCallback(bytes);
             System.err.println("TRING, offer sent");
             sendAck();
@@ -364,17 +367,17 @@ byte[] destArr = new byte[(int)len];
         }
     }
 
-    Addressable createIceUpdateCallback() {
+    MemorySegment createIceUpdateCallback() {
         IceUpdateCallbackImpl sci = new IceUpdateCallbackImpl();
-        MemorySegment seg = createCallEndpoint$iceUpdateCallback.allocate(sci, scope);
-        return seg.address();
+        MemorySegment seg = createCallEndpoint$iceUpdateCallback.allocate(sci, arena.scope());
+        return seg;
     }
 
     class IceUpdateCallbackImpl implements createCallEndpoint$iceUpdateCallback {
 
         @Override
         public void apply(MemorySegment icePack) {
-            byte[] bytes = fromJArrayByte(scope, icePack);
+            byte[] bytes = fromJArrayByte(arena, icePack);
             List<byte[]> iceCandidates = new ArrayList<>();
             iceCandidates.add(bytes);
 
@@ -383,20 +386,53 @@ byte[] destArr = new byte[(int)len];
             LOG.info("iceUpdate done!");
         }
     }
+    
+    MemorySegment createGenericCallback() {
+        GenericCallbackImpl sci = new GenericCallbackImpl();
+        MemorySegment seg = createCallEndpoint$genericCallback.allocate(sci, arena.scope());
+        return seg;
+    }
 
-    Addressable createVideoFrameCallback() {
+    class GenericCallbackImpl implements createCallEndpoint$genericCallback {
+
+        @Override
+        public void apply(int opcode, MemorySegment data) {
+            byte[] bytes = fromJArrayByte(arena, data);
+            LOG.info("Got generic  callback, opcode = " + opcode + " and data = " + Arrays.toString(bytes));
+            if (opcode == 1) {
+                // groupId
+                ByteBuffer bb = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN);
+                int groupIdLen = bb.getInt();
+                byte[] groupId = new byte[groupIdLen];
+                bb.get(groupId);
+                long ringId = bb.getLong();
+                byte[] senderBytes = new byte[bb.remaining()-1];
+                bb.get(senderBytes);
+                byte status = bb.get();
+                System.err.println("GroupId = "+Arrays.toString(groupId));
+                System.err.println("ringid = "+ringId);
+                System.err.println("senderBytes = "+Arrays.toString(senderBytes));
+                System.err.println("status = "+status);
+                api.groupCallUpdateRing(groupId, ringId, senderBytes, status);
+            }
+        }
+
+    }
+
+    MemorySegment createVideoFrameCallback() {
         VideoFrameCallbackImpl sci = new VideoFrameCallbackImpl();
-        MemorySegment seg = createCallEndpoint$videoFrameCallback.allocate(sci, scope);
-        return seg.address();
+        MemorySegment seg = createCallEndpoint$videoFrameCallback.allocate(sci, arena.scope());
+        return seg;
     }
     
     @Deprecated
     class VideoFrameCallbackImpl implements createCallEndpoint$videoFrameCallback {
         @Override
-        public void apply(MemoryAddress opaque, int w, int h, long size) {
+        public void apply(MemorySegment opaque, int w, int h, long size) {
             LOG.info("Got incoming video frame in Java layer, w = "+w+", h = " + h+", size = " + size);
             System.err.println("Opaque = " + opaque);
-            MemorySegment segment = MemorySegment.ofAddress(opaque, size, scope);
+       //     MemorySegment segment = MemorySegment.ofAddress(opaque, size, arena.scope());
+            MemorySegment segment = opaque;
             byte[] raw = segment.toArray(ValueLayout.JAVA_BYTE);
             synchronized (frameQueue) {
                 LOG.info("Add frame to queue");
@@ -411,7 +447,7 @@ byte[] destArr = new byte[(int)len];
     // We need to inform ringrtc that we handled a message, so that it is ok
     // with sending the next message
     void sendAck() {
-        MemorySegment callid = MemorySegment.allocateNative(8, scope);
+        MemorySegment callid = MemorySegment.allocateNative(8, arena.scope());
         callid.set(ValueLayout.JAVA_LONG, 0l, activeCallId);
         tringlib_h.signalMessageSent(callEndpoint, callid);
     }

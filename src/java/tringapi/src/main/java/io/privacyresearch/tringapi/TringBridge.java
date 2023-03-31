@@ -16,7 +16,7 @@ import java.util.stream.Collectors;
   * @author johan
   */
 public class TringBridge {
-    
+
     private TringService service;
     private static final Logger LOG = Logger.getLogger(TringBridge.class.getName());
 
@@ -94,5 +94,9 @@ public class TringBridge {
 
     public void setArray() {
         service.setArray();
+    }
+
+    public void peekGroupCall(byte[] membershipProof) {
+        service.peekGroupCall(membershipProof);
     }
 }
