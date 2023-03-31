@@ -8,7 +8,9 @@ import java.lang.foreign.MemorySegment;
 import java.lang.foreign.MemorySession;
 import java.lang.foreign.ValueLayout;
 import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.LinkedBlockingQueue;
@@ -70,7 +72,9 @@ public class TringServiceImpl implements TringService {
         scope = MemorySession.openShared();
         tringlib_h.initRingRTC(toJString(scope, "Hello from Java"));
         this.callEndpoint = tringlib_h.createCallEndpoint(createStatusCallback(), 
-                createAnswerCallback(), createOfferCallback(), createIceUpdateCallback(),
+                createAnswerCallback(), createOfferCallback(),
+                createIceUpdateCallback(),
+                createGenericCallback(),
         createVideoFrameCallback());
         
     }
@@ -176,6 +180,11 @@ public class TringServiceImpl implements TringService {
         tringlib_h.setAudioOutput(callEndpoint, (short)0);
         tringlib_h.createOutgoingCall(callEndpoint, toJString(scope, peerId), enableVideo, localDeviceId, callId);
         return callId;
+    }
+
+    @Override
+    public void peekGroupCall(byte[] membershipProof) {
+        tringlib_h.peekGroupCall(callEndpoint, toJByteArray(scope, membershipProof));
     }
 
     // for testing only
@@ -382,6 +391,37 @@ byte[] destArr = new byte[(int)len];
             sendAck();
             LOG.info("iceUpdate done!");
         }
+    }
+    MemorySegment createGenericCallback() {
+        GenericCallbackImpl sci = new GenericCallbackImpl();
+        MemorySegment seg = createCallEndpoint$genericCallback.allocate(sci, scope);
+        return seg;
+    }
+
+    class GenericCallbackImpl implements createCallEndpoint$genericCallback {
+
+        @Override
+        public void apply(int opcode, MemorySegment data) { 
+            byte[] bytes = fromJArrayByte(scope, data);
+            LOG.info("Got generic  callback, opcode = " + opcode + " and data = " + Arrays.toString(bytes));
+            if (opcode == 1) { 
+                // groupId 
+                ByteBuffer bb = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN);
+                int groupIdLen = bb.getInt();
+                byte[] groupId = new byte[groupIdLen];
+                bb.get(groupId);
+                long ringId = bb.getLong();
+                byte[] senderBytes = new byte[bb.remaining()-1];
+                bb.get(senderBytes);
+                byte status = bb.get();
+                System.err.println("GroupId = "+Arrays.toString(groupId));
+                System.err.println("ringid = "+ringId);
+                System.err.println("senderBytes = "+Arrays.toString(senderBytes));
+                System.err.println("status = "+status);
+                api.groupCallUpdateRing(groupId, ringId, senderBytes, status);
+            }
+        }
+
     }
 
     Addressable createVideoFrameCallback() {
