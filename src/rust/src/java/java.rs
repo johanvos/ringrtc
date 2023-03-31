@@ -1,8 +1,14 @@
 #![allow(unused_parens)]
 
+use jni::objects::{JMethodID, JObject, JString};
+use jni::sys::{jint, JNI_VERSION_1_6};
+use jni::{JNIEnv, JavaVM};
+
 use std::collections::HashMap;
 use std::convert::TryInto;
 
+use std::mem::transmute;
+use std::os::raw::c_void;
 use std::slice;
 use std::sync::atomic::AtomicBool;
 use std::sync::mpsc::{channel, Sender};
@@ -11,7 +17,7 @@ use std::time::Duration;
 
 use libc::size_t;
 
-use crate::common::{CallDirection, CallId, CallMediaType, DeviceId, Result};
+use crate::common::{CallId, CallMediaType, DeviceId, Result};
 use crate::core::bandwidth_mode::BandwidthMode;
 use crate::core::call_manager::CallManager;
 use crate::core::group_call;
@@ -20,7 +26,7 @@ use crate::core::signaling;
 use crate::core::util::ptr_as_mut;
 
 use crate::java::jtypes::{
-    JArrayByte, JArrayByte2D, JByteArray, JByteArray2D, JString, TringDevice,
+    JArrayByte, JByteArray, JByteArray2D, JPString, TringDevice,
 };
 
 use crate::lite::http;
@@ -41,6 +47,64 @@ use crate::webrtc::peer_connection_factory::{
 };
 use crate::webrtc::peer_connection_observer::NetworkRoute;
 
+const JAVA_CALLBACK_CLASS: &str = "io/privacyresearch/tring/TringServiceImpl";
+static mut JAVA_HTTP: Option<JMethodID> = None;
+static mut myClass: Option<JObject> = None;
+// static mut jvm: Option<JavaVM> = None;
+static mut jvm_box: i64 = 0;
+
+/// cbindgen:ignore
+#[no_mangle]
+#[allow(non_snake_case)]
+pub unsafe extern "C" fn JNI_OnLoad(vm: JavaVM, _: *mut c_void) -> jint {
+    info!("Loading RUST tringlib");
+    println!("pLoading RUST tringlib");
+
+    let mut env = vm.get_env().expect("Cannot get reference to the JNIEnv");
+    let mut r = JNI_VERSION_1_6;
+
+    init_cache(&mut env);
+
+    let java_box = Box::new(vm);
+    // let boxx: Result<*mut JavaVM> = Ok(Box::into_raw(java_box));
+
+    jvm_box = Box::into_raw(java_box) as i64;
+    r
+}
+
+unsafe fn init_cache(env: &mut JNIEnv) -> Result<()> {
+    JAVA_HTTP = Some(env.get_method_id(JAVA_CALLBACK_CLASS, "makeHttpRequest","(Ljava/lang/String;)V")?);
+    Ok(())
+}
+
+
+#[no_mangle]
+#[allow(non_snake_case)]
+pub unsafe extern "C" fn Java_io_privacyresearch_tring_TringServiceImpl_initializeNative(
+    mut env: JNIEnv,
+    obj: JObject,
+    endpoint: i64) {
+    println!("Initialize native RUST layer");
+    myClass = Some(transmute(obj));
+    // let callendpoint = ptr_as_mut(endpoint as *mut CallEndpoint).unwrap();
+    // callendpoint.javavm = env.get_java_vm().ok();
+}
+
+
+    fn make_http_request(url: String) {
+        unsafe {
+            let javavm = ptr_as_mut(jvm_box as *mut JavaVM).unwrap();
+            let env = javavm.attach_current_thread_as_daemon().unwrap();
+/*
+            let env = match javavm.get_env() {
+                Ok(v) => Ok(v),
+                Err(_e) => Ok(javavm.attach_current_thread_as_daemon()),
+            };
+*/
+            env.call_method_unchecked(myclass, url);
+        }
+        // let env = java_env().unwrap();
+    }
 fn init_logging() {
     env_logger::builder()
         .filter(None, log::LevelFilter::Debug)
@@ -258,6 +322,8 @@ impl EventReporter {
                 info!("Requesturl = {:?}", url);
                 info!("Requestheaders = {:?}", headers);
                 info!("Requestbody = {:?}", body);
+                make_http_request(url);
+/*
                 let mut payload:Vec<u8> = Vec::new();
                 let rid = request_id as i32;
                 payload.extend_from_slice(&rid.to_le_bytes());
@@ -282,6 +348,7 @@ impl EventReporter {
                 unsafe {
                     (self.genericCallback)(2, data);
                 }
+*/
             }
             Event::GroupUpdate(GroupUpdate::RequestMembershipProof(client_id)) => {
                 info!("NYI RMP");
@@ -493,6 +560,7 @@ pub struct CallEndpoint {
     incoming_video_sink: Box<LastFramesVideoSink>,
     peer_connection_factory: PeerConnectionFactory,
     videoFrameCallback: extern "C" fn(*const u8, u32, u32, size_t),
+    // javavm: Option<JavaVM>,
 }
 
 impl CallEndpoint {
@@ -521,6 +589,7 @@ impl CallEndpoint {
 
         let event_reported = Arc::new(AtomicBool::new(false));
 
+        // let javavm = None;
         let event_reporter = EventReporter::new(
             statusCallback,
             answerCallback,
@@ -534,6 +603,7 @@ impl CallEndpoint {
                     return;
                 }
             },
+            // javavm,
         );
         // Only relevant for 1:1 calls
         let signaling_sender = Box::new(event_reporter.clone());
@@ -561,8 +631,20 @@ impl CallEndpoint {
             incoming_video_sink,
             peer_connection_factory,
             videoFrameCallback,
+            // javavm,
         })
     }
+
+/*
+    fn java_env(&self) -> Result<JNIEnv> {
+        match self.javavm.get_env() {
+            Ok(v) => Ok(v),
+            Err(_e) => Ok(self.javavm.attach_current_thread_as_daemon()?),
+        }
+    }
+*/
+
+
 }
 
 #[derive(Clone, Default)]
@@ -602,7 +684,7 @@ impl LastFramesVideoSink {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn initRingRTC(ts: JString) -> i64 {
+pub unsafe extern "C" fn initRingRTC(ts: JPString) -> i64 {
     println!("Initialize RingRTC, init logging");
     init_logging();
     println!("Initialize RingRTC, init logging done");
@@ -652,7 +734,7 @@ pub unsafe extern "C" fn createCallEndpoint(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn setSelfUuid(endpoint: i64, ts: JString) -> i64 {
+pub unsafe extern "C" fn setSelfUuid(endpoint: i64, ts: JPString) -> i64 {
     let txt = ts.to_string();
     info!("setSelfUuid to : {}", txt);
     let uuid = txt.into_bytes();
@@ -664,7 +746,7 @@ pub unsafe extern "C" fn setSelfUuid(endpoint: i64, ts: JString) -> i64 {
 #[no_mangle]
 pub unsafe extern "C" fn receivedOffer(
     endpoint: i64,
-    peerId: JString,
+    peerId: JPString,
     call_id: u64,
     offer_type: i32,
     sender_device_id: u32,
@@ -675,7 +757,7 @@ pub unsafe extern "C" fn receivedOffer(
     age_sec: u64,
 ) -> i64 {
     let callendpoint = ptr_as_mut(endpoint as *mut CallEndpoint).unwrap();
-    let peer_id = JString::from(peerId);
+    let peer_id = JPString::from(peerId);
     let call_id = CallId::new(call_id);
     let call_media_type = match offer_type {
         1 => CallMediaType::Video,
@@ -718,7 +800,7 @@ pub unsafe extern "C" fn receivedOpaqueMessage(
 #[no_mangle]
 pub unsafe extern "C" fn receivedAnswer(
     endpoint: i64,
-    peerId: JString,
+    peerId: JPString,
     call_id: u64,
     sender_device_id: u32,
     sender_key: JByteArray,
@@ -726,7 +808,7 @@ pub unsafe extern "C" fn receivedAnswer(
     opaque: JByteArray,
 ) -> i64 {
     let callendpoint = ptr_as_mut(endpoint as *mut CallEndpoint).unwrap();
-    let peer_id = JString::from(peerId);
+    let peer_id = JPString::from(peerId);
     let call_id = CallId::new(call_id);
     let answer = signaling::Answer::new(opaque.to_vec_u8()).unwrap();
     callendpoint.call_manager.received_answer(
@@ -745,7 +827,7 @@ pub unsafe extern "C" fn receivedAnswer(
 #[no_mangle]
 pub unsafe extern "C" fn createOutgoingCall(
     endpoint: i64,
-    peer_id: JString,
+    peer_id: JPString,
     video_enabled: bool,
     local_device_id: u32,
     call_id: i64,
@@ -771,8 +853,8 @@ pub unsafe extern "C" fn proceedCall(
     call_id: u64,
     bandwidth_mode: i32,
     audio_levels_interval_millis: i32,
-    ice_user: JString,
-    ice_pwd: JString,
+    ice_user: JPString,
+    ice_pwd: JPString,
     icepack: JByteArray2D,
 ) -> i64 {
     info!("Proceeding with call");

@@ -50,10 +50,11 @@ public class TringServiceImpl implements TringService {
         // no-op
     }
 
-    public static TringService provider() {
-        return instance;
-    }
+//    public static TringService provider() {
+//        return instance;
+//    }
     
+    @Override
     public String getVersionInfo() {
         return "TringServiceImpl using "+libName;
     }
@@ -76,7 +77,7 @@ public class TringServiceImpl implements TringService {
                 createIceUpdateCallback(),
                 createGenericCallback(),
         createVideoFrameCallback());
-        
+        initializeNative(this.callEndpoint);
     }
     
     private void processAudioInputs() {
@@ -321,11 +322,18 @@ byte[] destArr = new byte[(int)len];
         return answer;
     }
 
+    public void makeHttpRequest(String request) {
+        System.err.println("MAKE REQUEST: request");
+    }
+    private native void initializeNative(long callEndpoint);
+    
+    
     Addressable createStatusCallback() {
         StatusCallbackImpl sci = new StatusCallbackImpl();
         MemorySegment seg = createCallEndpoint$statusCallback.allocate(sci, scope);
         return seg.address();
     }
+
 
 
     class StatusCallbackImpl implements createCallEndpoint$statusCallback {

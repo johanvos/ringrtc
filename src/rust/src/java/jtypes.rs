@@ -8,12 +8,12 @@ use std::fmt;
 
 #[repr(C)]
 #[derive(Debug)]
-pub struct JString {
+pub struct JPString {
     len: usize,
     buff: *mut u8,
 }
 
-impl JString {
+impl JPString {
     pub fn to_string(&self) -> String {
         let answer = unsafe { String::from_raw_parts(self.buff, self.len, self.len) };
         answer

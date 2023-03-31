@@ -53,12 +53,12 @@ thiserror         = { version = "1.0.20" }
 tokio             = { version = "1.13.0", features = ["rt-multi-thread", "time"] }
 x25519-dalek      = { version = "1.1"    }
 env_logger        = { version = "0.8.1" }
+jni = { version = "0.21.0", default-features = false, optional = true }
 
 # Optional, needed by the "electron" feature
 neon = { version = "0.10.1", optional = true, default-features = false, features = ["napi-6", "channel-api"] }
 
 # Optional, needed to check Android-specific code when not targeting Android
-jni = { version = "0.19.0", optional = true, default-features = false }
 
 # Optional, needed by the "http" feature
 ureq = { version = "=2.2", optional = true }
@@ -69,7 +69,7 @@ webpki = { version = "0.21", optional = true }
 default = []
 sim = []
 electron = ["neon", "native"]
-java = ["native"]
+java = ["native", "jni"]
 native = []  # We have this so we can more easily disable things only native clients need
 simnet = []  # We have this so we can more easily disable things only simulated native client need
 http = ["ureq", "rustls", "webpki"]
@@ -85,8 +85,6 @@ name = "outgoing"
 path = "tests/outgoing.rs"
 required-features = ["sim"]
 
-[target.'cfg(target_os="android")'.dependencies]
-jni = { version = "0.19.0", default-features = false }
 
 [build-dependencies]
 cbindgen = "0.20.0"
