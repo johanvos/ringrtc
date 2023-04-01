@@ -323,8 +323,13 @@ byte[] destArr = new byte[(int)len];
     }
 
     public void makeHttpRequest(String request) {
-        System.err.println("MAKE REQUEST: request");
+        System.err.println("MAKE REQUEST:"+ request);
     }
+  
+    public static void makeStaticHttpRequest(String request) {
+        System.err.println("MAKE STATIC REQUEST: request");
+    }  
+
     private native void initializeNative(long callEndpoint);
     
     

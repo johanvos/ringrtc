@@ -1,6 +1,7 @@
 #![allow(unused_parens)]
 
-use jni::objects::{JMethodID, JObject, JString};
+use jni::objects::{GlobalRef, JMethodID, JObject, JStaticMethodID, JString, JValue};
+use jni::signature::{Primitive, ReturnType};
 use jni::sys::{jint, JNI_VERSION_1_6};
 use jni::{JNIEnv, JavaVM};
 
@@ -49,7 +50,12 @@ use crate::webrtc::peer_connection_observer::NetworkRoute;
 
 const JAVA_CALLBACK_CLASS: &str = "io/privacyresearch/tring/TringServiceImpl";
 static mut JAVA_HTTP: Option<JMethodID> = None;
-static mut myClass: Option<JObject> = None;
+static mut JAVA_STATIC_HTTP: Option<JStaticMethodID> = None;
+// static mut myClass: Option<JObject> = None;
+static mut myClass: i64 = 0;
+
+static mut target_object: Option<GlobalRef> = None;
+
 // static mut jvm: Option<JavaVM> = None;
 static mut jvm_box: i64 = 0;
 
@@ -74,6 +80,7 @@ pub unsafe extern "C" fn JNI_OnLoad(vm: JavaVM, _: *mut c_void) -> jint {
 
 unsafe fn init_cache(env: &mut JNIEnv) -> Result<()> {
     JAVA_HTTP = Some(env.get_method_id(JAVA_CALLBACK_CLASS, "makeHttpRequest","(Ljava/lang/String;)V")?);
+    JAVA_STATIC_HTTP = Some(env.get_static_method_id(JAVA_CALLBACK_CLASS, "makeStaticHttpRequest","(Ljava/lang/String;)V")?);
     Ok(())
 }
 
@@ -84,24 +91,44 @@ pub unsafe extern "C" fn Java_io_privacyresearch_tring_TringServiceImpl_initiali
     mut env: JNIEnv,
     obj: JObject,
     endpoint: i64) {
-    println!("Initialize native RUST layer");
-    myClass = Some(transmute(obj));
-    // let callendpoint = ptr_as_mut(endpoint as *mut CallEndpoint).unwrap();
-    // callendpoint.javavm = env.get_java_vm().ok();
+    println!("Initialize native RUST layer, obj = {:?}", obj);
+    target_object = env.new_global_ref(obj).ok();
+
+    // obj = env.new_global_ref(obj)?;
+    // let obj_box = Box::new(obj);
+    // myClass = Box::into_raw(obj_box) as i64;
+    // println!("Got myclass: {}", myClass);
+
+
+    // let jurl = env.new_string(String::from("Hello")).unwrap();
+    // let args = [JValue::Object(&jurl).as_jni()];
+// println!("Let's invoke the http method, ");
+    // env.call_method_unchecked(obj, JAVA_HTTP.unwrap(), ReturnType::Primitive(Primitive::Void),&args);
+// println!("Did invoke the http method");
 }
 
 
     fn make_http_request(url: String) {
-        unsafe {
+unsafe {
+ println!("Let's make a real http request, url = {}",url);
             let javavm = ptr_as_mut(jvm_box as *mut JavaVM).unwrap();
-            let env = javavm.attach_current_thread_as_daemon().unwrap();
-/*
-            let env = match javavm.get_env() {
-                Ok(v) => Ok(v),
-                Err(_e) => Ok(javavm.attach_current_thread_as_daemon()),
-            };
-*/
-            env.call_method_unchecked(myclass, url);
+println!("Let's make a real http request, javavm = {:?}",javavm);
+            let mut env = javavm.attach_current_thread_as_daemon().unwrap();
+println!("Let's make a real http request, env = {:?}",env);
+            // let sc = env.find_class(JAVA_CALLBACK_CLASS);
+// println!("Let's make a real http request, sc = {:?}",sc);
+            let jurl = env.new_string(&url).unwrap();
+println!("Let's make a real http request, got jurl ");
+            let args = [JValue::Object(&jurl).as_jni()];
+ let original_object = target_object.as_ref().clone().unwrap().as_obj();
+        // .object_from_raw(target_object)
+        // .expect("Failed to create JObject from raw pointer.");
+
+
+    // let objj = ptr_as_mut(myClass as *mut JObject).unwrap();
+println!("Let's make a real http request, orig = {:?}",original_object);
+            env.call_method_unchecked(&original_object, JAVA_HTTP.unwrap(), ReturnType::Primitive(Primitive::Void),&args);
+            // env.call_method_unchecked(&objj, JAVA_HTTP.unwrap(), ReturnType::Primitive(Primitive::Void),&args);
         }
         // let env = java_env().unwrap();
     }
