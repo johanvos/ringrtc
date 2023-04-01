@@ -11,10 +11,11 @@ import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.LinkedBlockingQueue;
-import java.util.logging.Level;
 import java.util.logging.Logger;
 
 public class TringServiceImpl implements TringService {
@@ -322,8 +323,25 @@ byte[] destArr = new byte[(int)len];
         return answer;
     }
 
-    public void makeHttpRequest(String request, byte m, int reqid, byte[] headers) {
+    public void makeHttpRequest(String request, byte m, int reqid, byte[] headers, byte[] body) {
         System.err.println("MAKE REQUEST:"+ request+" and method = "+m+", reqid = "+reqid+", headers = "+Arrays.toString(headers));
+       ByteBuffer bb = ByteBuffer.wrap(headers);
+       Map<String, String> headerMap = new HashMap<>();
+       while (bb.hasRemaining()) {
+           int size = bb.getInt();
+           System.err.println("Got size: "+size);
+           byte[] b = new byte[size];
+           bb.get(b);
+           String key = new String(b);
+           size = bb.getInt();
+           System.err.println("Got valsize: "+size);
+           b = new byte[size];
+           bb.get(b);
+           String val = new String(b);
+           headerMap.put(key, val);
+       }
+        System.err.println("headers = "+headerMap);
+        System.err.println("body = "+Arrays.toString(body));
     }
   
     public static void makeStaticHttpRequest(String request) {

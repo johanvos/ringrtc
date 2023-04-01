@@ -75,7 +75,7 @@ pub unsafe extern "C" fn JNI_OnLoad(vm: JavaVM, _: *mut c_void) -> jint {
 }
 
 unsafe fn init_cache(env: &mut JNIEnv) -> Result<()> {
-    JAVA_HTTP = Some(env.get_method_id(JAVA_CALLBACK_CLASS, "makeHttpRequest","(Ljava/lang/String;BI[B)V")?);
+    JAVA_HTTP = Some(env.get_method_id(JAVA_CALLBACK_CLASS, "makeHttpRequest","(Ljava/lang/String;BI[B[B)V")?);
     Ok(())
 }
 
@@ -90,17 +90,19 @@ pub unsafe extern "C" fn Java_io_privacyresearch_tring_TringServiceImpl_initiali
     target_object = env.new_global_ref(obj).ok();
 }
 
-fn make_http_request(url: String, method: i8, reqid: i32, data: Vec<u8>) {
+fn make_http_request(url: String, method: i8, reqid: i32, data: Vec<u8>, body: Vec<u8>) {
     unsafe {
         let javavm = ptr_as_mut(jvm_box as *mut JavaVM).unwrap();
         let mut env = javavm.attach_current_thread_as_daemon().unwrap();
         let jurl = env.new_string(&url).unwrap();
-    let output_object = env.byte_array_from_slice(&data).unwrap();
+        let jheaders = env.byte_array_from_slice(&data).unwrap();
+        let jbody = env.byte_array_from_slice(&body).unwrap();
 
         let args = [JValue::Object(&jurl).as_jni(),
                     JValue::Byte(method).as_jni(),
                     JValue::Int(reqid).as_jni(),
-                    JValue::Object(&output_object).as_jni()];
+                    JValue::Object(&jheaders).as_jni(),
+                    JValue::Object(&jbody).as_jni()];
         let original_object = target_object.as_ref().clone().unwrap().as_obj();
 println!("Let's make a real http request, orig = {:?}",original_object);
         env.call_method_unchecked(&original_object, JAVA_HTTP.unwrap(), ReturnType::Primitive(Primitive::Void),&args);
@@ -186,8 +188,8 @@ struct EventReporter {
 
 fn string_to_bytes(v:String) -> Vec<u8> {
     let mut answer:Vec<u8> = Vec::new();
-    let ul = v.len();
-    answer.extend_from_slice(&ul.to_le_bytes());
+    let ul = v.len() as u32;
+    answer.extend_from_slice(&ul.to_be_bytes());
     answer.extend_from_slice(v.as_bytes());
     answer
 }
@@ -327,10 +329,17 @@ impl EventReporter {
 
                 let mut hdr:Vec<u8> = Vec::new();
                 for (name, value) in headers.iter() {
+println!("Need to add to header: {} == {}", name.to_string(), value.to_string());
                     hdr.extend(string_to_bytes(name.to_string()));
                     hdr.extend(string_to_bytes(value.to_string()));
                 }
-                make_http_request(url, method as i8, request_id as i32, hdr);
+
+                let mut bodyb:Vec<u8> = Vec::new();
+                let bl = body.as_ref().map_or(0, |v| v.len());
+                bodyb.extend_from_slice(&bl.to_be_bytes());
+                bodyb.extend(body.unwrap_or_default());
+
+                make_http_request(url, method as i8, request_id as i32, hdr, bodyb);
 /*
                 let mut payload:Vec<u8> = Vec::new();
                 let rid = request_id as i32;
