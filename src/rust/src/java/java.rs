@@ -50,13 +50,9 @@ use crate::webrtc::peer_connection_observer::NetworkRoute;
 
 const JAVA_CALLBACK_CLASS: &str = "io/privacyresearch/tring/TringServiceImpl";
 static mut JAVA_HTTP: Option<JMethodID> = None;
-static mut JAVA_STATIC_HTTP: Option<JStaticMethodID> = None;
-// static mut myClass: Option<JObject> = None;
-static mut myClass: i64 = 0;
 
 static mut target_object: Option<GlobalRef> = None;
 
-// static mut jvm: Option<JavaVM> = None;
 static mut jvm_box: i64 = 0;
 
 /// cbindgen:ignore
@@ -79,8 +75,7 @@ pub unsafe extern "C" fn JNI_OnLoad(vm: JavaVM, _: *mut c_void) -> jint {
 }
 
 unsafe fn init_cache(env: &mut JNIEnv) -> Result<()> {
-    JAVA_HTTP = Some(env.get_method_id(JAVA_CALLBACK_CLASS, "makeHttpRequest","(Ljava/lang/String;)V")?);
-    JAVA_STATIC_HTTP = Some(env.get_static_method_id(JAVA_CALLBACK_CLASS, "makeStaticHttpRequest","(Ljava/lang/String;)V")?);
+    JAVA_HTTP = Some(env.get_method_id(JAVA_CALLBACK_CLASS, "makeHttpRequest","(Ljava/lang/String;BI[B)V")?);
     Ok(())
 }
 
@@ -93,45 +88,25 @@ pub unsafe extern "C" fn Java_io_privacyresearch_tring_TringServiceImpl_initiali
     endpoint: i64) {
     println!("Initialize native RUST layer, obj = {:?}", obj);
     target_object = env.new_global_ref(obj).ok();
-
-    // obj = env.new_global_ref(obj)?;
-    // let obj_box = Box::new(obj);
-    // myClass = Box::into_raw(obj_box) as i64;
-    // println!("Got myclass: {}", myClass);
-
-
-    // let jurl = env.new_string(String::from("Hello")).unwrap();
-    // let args = [JValue::Object(&jurl).as_jni()];
-// println!("Let's invoke the http method, ");
-    // env.call_method_unchecked(obj, JAVA_HTTP.unwrap(), ReturnType::Primitive(Primitive::Void),&args);
-// println!("Did invoke the http method");
 }
 
+fn make_http_request(url: String, method: i8, reqid: i32, data: Vec<u8>) {
+    unsafe {
+        let javavm = ptr_as_mut(jvm_box as *mut JavaVM).unwrap();
+        let mut env = javavm.attach_current_thread_as_daemon().unwrap();
+        let jurl = env.new_string(&url).unwrap();
+    let output_object = env.byte_array_from_slice(&data).unwrap();
 
-    fn make_http_request(url: String) {
-unsafe {
- println!("Let's make a real http request, url = {}",url);
-            let javavm = ptr_as_mut(jvm_box as *mut JavaVM).unwrap();
-println!("Let's make a real http request, javavm = {:?}",javavm);
-            let mut env = javavm.attach_current_thread_as_daemon().unwrap();
-println!("Let's make a real http request, env = {:?}",env);
-            // let sc = env.find_class(JAVA_CALLBACK_CLASS);
-// println!("Let's make a real http request, sc = {:?}",sc);
-            let jurl = env.new_string(&url).unwrap();
-println!("Let's make a real http request, got jurl ");
-            let args = [JValue::Object(&jurl).as_jni()];
- let original_object = target_object.as_ref().clone().unwrap().as_obj();
-        // .object_from_raw(target_object)
-        // .expect("Failed to create JObject from raw pointer.");
-
-
-    // let objj = ptr_as_mut(myClass as *mut JObject).unwrap();
+        let args = [JValue::Object(&jurl).as_jni(),
+                    JValue::Byte(method).as_jni(),
+                    JValue::Int(reqid).as_jni(),
+                    JValue::Object(&output_object).as_jni()];
+        let original_object = target_object.as_ref().clone().unwrap().as_obj();
 println!("Let's make a real http request, orig = {:?}",original_object);
-            env.call_method_unchecked(&original_object, JAVA_HTTP.unwrap(), ReturnType::Primitive(Primitive::Void),&args);
-            // env.call_method_unchecked(&objj, JAVA_HTTP.unwrap(), ReturnType::Primitive(Primitive::Void),&args);
-        }
-        // let env = java_env().unwrap();
+        env.call_method_unchecked(&original_object, JAVA_HTTP.unwrap(), ReturnType::Primitive(Primitive::Void),&args);
     }
+}
+
 fn init_logging() {
     env_logger::builder()
         .filter(None, log::LevelFilter::Debug)
@@ -349,7 +324,13 @@ impl EventReporter {
                 info!("Requesturl = {:?}", url);
                 info!("Requestheaders = {:?}", headers);
                 info!("Requestbody = {:?}", body);
-                make_http_request(url);
+
+                let mut hdr:Vec<u8> = Vec::new();
+                for (name, value) in headers.iter() {
+                    hdr.extend(string_to_bytes(name.to_string()));
+                    hdr.extend(string_to_bytes(value.to_string()));
+                }
+                make_http_request(url, method as i8, request_id as i32, hdr);
 /*
                 let mut payload:Vec<u8> = Vec::new();
                 let rid = request_id as i32;

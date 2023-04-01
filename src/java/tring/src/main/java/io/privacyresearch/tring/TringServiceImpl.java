@@ -322,8 +322,8 @@ byte[] destArr = new byte[(int)len];
         return answer;
     }
 
-    public void makeHttpRequest(String request) {
-        System.err.println("MAKE REQUEST:"+ request);
+    public void makeHttpRequest(String request, byte m, int reqid, byte[] headers) {
+        System.err.println("MAKE REQUEST:"+ request+" and method = "+m+", reqid = "+reqid+", headers = "+Arrays.toString(headers));
     }
   
     public static void makeStaticHttpRequest(String request) {
