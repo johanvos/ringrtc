@@ -2,11 +2,17 @@ package io.privacyresearch.tring;
 
 import io.privacyresearch.tringapi.TringFrame;
 import io.privacyresearch.tringapi.TringService;
+import java.io.IOException;
 import java.lang.foreign.Addressable;
 import java.lang.foreign.MemoryAddress;
 import java.lang.foreign.MemorySegment;
 import java.lang.foreign.MemorySession;
 import java.lang.foreign.ValueLayout;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.net.http.HttpResponse.BodyHandlers;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.util.ArrayList;
@@ -14,8 +20,10 @@ import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Map.Entry;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.LinkedBlockingQueue;
+import java.util.logging.Level;
 import java.util.logging.Logger;
 
 public class TringServiceImpl implements TringService {
@@ -323,33 +331,53 @@ byte[] destArr = new byte[(int)len];
         return answer;
     }
 
-    public void makeHttpRequest(String request, byte m, int reqid, byte[] headers, byte[] body) {
-        System.err.println("MAKE REQUEST:"+ request+" and method = "+m+", reqid = "+reqid+", headers = "+Arrays.toString(headers));
+    public void makeHttpRequest(String uri, byte m, int reqid, byte[] headers, byte[] body) {
+        System.err.println("MAKE REQUEST:"+ uri+" and method = "+m+", reqid = "+reqid+", headers = "+Arrays.toString(headers));
        ByteBuffer bb = ByteBuffer.wrap(headers);
        Map<String, String> headerMap = new HashMap<>();
-       while (bb.hasRemaining()) {
-           int size = bb.getInt();
-           System.err.println("Got size: "+size);
-           byte[] b = new byte[size];
-           bb.get(b);
-           String key = new String(b);
-           size = bb.getInt();
-           System.err.println("Got valsize: "+size);
-           b = new byte[size];
-           bb.get(b);
-           String val = new String(b);
-           headerMap.put(key, val);
-       }
-        System.err.println("headers = "+headerMap);
-        System.err.println("body = "+Arrays.toString(body));
+        while (bb.hasRemaining()) {
+            int size = bb.getInt();
+            System.err.println("Got size: " + size);
+            byte[] b = new byte[size];
+            bb.get(b);
+            String key = new String(b);
+            size = bb.getInt();
+            System.err.println("Got valsize: " + size);
+            b = new byte[size];
+            bb.get(b);
+            String val = new String(b);
+            headerMap.put(key, val);
+        }
+        System.err.println("headers = " + headerMap);
+        System.err.println("body = " + Arrays.toString(body));
+        HttpClient client = HttpClient.newHttpClient();
+        HttpRequest.Builder builder = HttpRequest.newBuilder()
+                .uri(URI.create(uri));
+        for (Entry<String, String> entry : headerMap.entrySet()) {
+            builder.header(entry.getKey(), entry.getValue());
+        }
+        HttpRequest request = builder.build();
+        
+        HttpResponse<String> response;
+        try {
+            response = client.send(request, BodyHandlers.ofString());
+            System.out.println(response.body());
+            tringlib_h.panamaReceivedHttpResponse(callEndpoint, reqid, response.statusCode(), toJByteArray(scope, response.body().getBytes()));
+          //  ringrtcReceivedHttpResponse(callEndpoint, reqid, response.statusCode(), response.body().getBytes());
+        } catch (IOException ex) {
+            Logger.getLogger(TringServiceImpl.class.getName()).log(Level.SEVERE, null, ex);
+        } catch (InterruptedException ex) {
+            Logger.getLogger(TringServiceImpl.class.getName()).log(Level.SEVERE, null, ex);
+        }
+
     }
-  
+
     public static void makeStaticHttpRequest(String request) {
         System.err.println("MAKE STATIC REQUEST: request");
     }  
 
     private native void initializeNative(long callEndpoint);
-    
+    private native void ringrtcReceivedHttpResponse(long callEndpoint, long requestid, int status, byte[] body);
     
     Addressable createStatusCallback() {
         StatusCallbackImpl sci = new StatusCallbackImpl();

@@ -2,7 +2,7 @@
 
 use jni::objects::{GlobalRef, JMethodID, JObject, JStaticMethodID, JString, JValue};
 use jni::signature::{Primitive, ReturnType};
-use jni::sys::{jint, JNI_VERSION_1_6};
+use jni::sys::{jbyteArray, jint, jlong, JNI_VERSION_1_6};
 use jni::{JNIEnv, JavaVM};
 
 use std::collections::HashMap;
@@ -80,6 +80,9 @@ unsafe fn init_cache(env: &mut JNIEnv) -> Result<()> {
 }
 
 
+// ===== JNI METHODS
+
+/// cbindgen:ignore
 #[no_mangle]
 #[allow(non_snake_case)]
 pub unsafe extern "C" fn Java_io_privacyresearch_tring_TringServiceImpl_initializeNative(
@@ -89,6 +92,62 @@ pub unsafe extern "C" fn Java_io_privacyresearch_tring_TringServiceImpl_initiali
     println!("Initialize native RUST layer, obj = {:?}", obj);
     target_object = env.new_global_ref(obj).ok();
 }
+
+/*
+#[no_mangle]
+#[allow(non_snake_case)]
+pub unsafe extern "C" fn Java_io_privacyresearch_tring_TringServiceImpl_ringrtcReceivedHttpResponse(
+    mut env: JNIEnv,
+    obj: JObject,
+    endpoint: jlong,
+    request_id: jlong,
+    status_code: jint,
+    body: jbyteArray,
+) {
+    match do_received_http_response(
+        &env,
+        endpoint,
+        request_id,
+        status_code,
+        body,
+    ) {
+        Ok(v) => v,
+        Err(e) => {
+            println!("Fatal error");
+        }
+    }
+}
+
+pub fn do_received_http_response(
+    env: &JNIEnv,
+    endpoint: jlong,
+    request_id: jlong,
+    status_code: jint,
+    jbody: jbyteArray,
+) -> Result<()> {
+
+
+    println!("receivedHttpResponse!");
+    let body = if jbody.is_null() {
+        error!("Invalid body"); 
+        return Ok(()); 
+    } else {
+        env.convert_byte_array(jbody)?
+    };
+
+    let response = http::Response {
+        status: (status_code as u16).into(),
+        body,
+    };
+
+    let callendpoint = ptr_as_mut(endpoint as *mut CallEndpoint).unwrap();
+    callendpoint.call_manager.received_http_response(request_id as u32, Some(response));
+    Ok(())  
+
+}
+*/
+
+// === OUTGOING JNI
 
 fn make_http_request(url: String, method: i8, reqid: i32, data: Vec<u8>, body: Vec<u8>) {
     unsafe {
@@ -108,6 +167,8 @@ println!("Let's make a real http request, orig = {:?}",original_object);
         env.call_method_unchecked(&original_object, JAVA_HTTP.unwrap(), ReturnType::Primitive(Primitive::Void),&args);
     }
 }
+
+// == END JNI
 
 fn init_logging() {
     env_logger::builder()
@@ -401,6 +462,18 @@ println!("Need to add to header: {} == {}", name.to_string(), value.to_string())
                 request_id,
                 peek_result,
             }) => {
+                let peek_info = peek_result.unwrap_or_default();
+                let joined_members = peek_info.unique_users();
+unsafe{
+        let javavm = ptr_as_mut(jvm_box as *mut JavaVM).unwrap();
+        let mut env = javavm.attach_current_thread_as_daemon().unwrap();
+/*
+        let _ = env.with_local_frame(capacity, |_| {
+Ok(JObject::null())
+        });
+*/
+}
+
                 info!("NYI PeekResult");
             }
             Event::GroupUpdate(GroupUpdate::Ended(client_id, reason)) => {
@@ -1129,3 +1202,20 @@ pub unsafe extern "C" fn peekGroupCall(endpoint: i64,
     endpoint.call_manager.peek_group_call(1, sfu, membership_proof, Vec::new());
     1
 }
+
+#[no_mangle]
+pub unsafe extern "C" fn panamaReceivedHttpResponse(endpoint: i64,
+    request_id: u32, 
+    status_code: u32, 
+    jbody:JByteArray) -> i64 {
+    let body = jbody.to_vec_u8();
+    let response = http::Response {
+        status: (status_code as u16).into(),
+        body,
+    };
+
+    let callendpoint = ptr_as_mut(endpoint as *mut CallEndpoint).unwrap();
+    callendpoint.call_manager.received_http_response(request_id as u32, Some(response));
+    1
+}
+
