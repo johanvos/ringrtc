@@ -19,4 +19,6 @@ public interface TringApi {
     void groupCallUpdateRing(byte[] groupId, long ringId, byte[] senderBytes, byte status);
     // void getVideoFrame(int w, int h, byte[] raw);
 
+    public void receivedGroupCallPeekForRingingCheck(PeekInfo peekInfo);
+
 }

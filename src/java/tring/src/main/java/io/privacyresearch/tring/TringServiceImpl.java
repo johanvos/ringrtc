@@ -1,5 +1,6 @@
 package io.privacyresearch.tring;
 
+import io.privacyresearch.tringapi.PeekInfo;
 import io.privacyresearch.tringapi.TringFrame;
 import io.privacyresearch.tringapi.TringService;
 import java.io.IOException;
@@ -21,10 +22,12 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
+import java.util.UUID;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.logging.Level;
 import java.util.logging.Logger;
+import java.util.stream.Collectors;
 
 public class TringServiceImpl implements TringService {
 
@@ -332,10 +335,22 @@ byte[] destArr = new byte[(int)len];
         return answer;
     }
 
-    public void gotPeekResult(Object joined) {
+    public void handlePeekResponse(List joined, byte[] creator, String era, long maxDevices, long deviceCount) {
         System.err.println("JAVA: GOT PEEK RESULT");
+        System.err.println("era = " + era);
         System.err.println("JOINED: "+joined);
+        List<UUID> joinedMembers = new ArrayList<>();
+        for (Object entry : joined) {
+            joinedMembers.add(UUID.nameUUIDFromBytes((byte[])entry));
+        }
+        UUID creatorId = UUID.nameUUIDFromBytes(creator);
+        if (joined instanceof List joinedList) {
+            joinedList.forEach(j -> System.err.println("joined: "+Arrays.toString((byte[])j)));
+        }
+        PeekInfo peekInfo = new PeekInfo(joinedMembers, creatorId,era, maxDevices, deviceCount);
+        api.receivedGroupCallPeekForRingingCheck(peekInfo);
     }
+    
     public void makeHttpRequest(String uri, byte m, int reqid, byte[] headers, byte[] body) {
         System.err.println("MAKE REQUEST:"+ uri+" and method = "+m+", reqid = "+reqid+", headers = "+Arrays.toString(headers));
        ByteBuffer bb = ByteBuffer.wrap(headers);

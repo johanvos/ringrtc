@@ -83,7 +83,7 @@ pub unsafe extern "C" fn JNI_OnLoad(vm: JavaVM, _: *mut c_void) -> jint {
 
 unsafe fn init_cache(env: &mut JNIEnv) -> Result<()> {
     JAVA_HTTP = Some(env.get_method_id(JAVA_CALLBACK_CLASS, "makeHttpRequest","(Ljava/lang/String;BI[B[B)V")?);
-    JAVA_PEEK_RESULT = Some(env.get_method_id(JAVA_CALLBACK_CLASS, "gotPeekResult","(Ljava/lang/Object;)V")?);
+    JAVA_PEEK_RESULT = Some(env.get_method_id(JAVA_CALLBACK_CLASS, "handlePeekResponse","(Ljava/util/List;[BLjava/lang/String;JJ)V")?);
     JAVA_UTIL_LIST_ADD = Some(env.get_method_id(
         JAVA_UTIL_LIST_CLASS,
         "add",
@@ -518,12 +518,46 @@ println!("GOT JM: {:?}", jni_opaque_user_id);
 
 
                     };
+            let jni_creator = match peek_info.creator.as_ref() {
+                None => JObject::null(),
+                Some(creator) => match env.byte_array_from_slice(creator) {
+                    Ok(v) => JObject::from(v),
+                    Err(error) => {
+                        error!("{:?}", error); 
+                        return Ok(());
+                    }
+                },
+            };
+            let jni_era_id = match peek_info.era_id.as_ref() {
+                None => JObject::null(),
+                Some(era_id) => match env.new_string(era_id) {
+                    Ok(v) => JObject::from(v),
+                    Err(error) => {
+                        error!("{:?}", error); 
+                        return Ok(());
+                    }
+                },
+            };
+            let jni_max_devices =50 as jlong;
+/*
+                match self.get_optional_u32_long_object(&env, peek_info.max_devices) {
+                    Ok(v) => v,
+                    Err(error) => {
+                        error!("{:?}", error);
+                        return Ok(JObject::null());
+                    }
+                };
+*/
+            let jni_device_count = peek_info.device_count as jlong;
                     let original_object = target_object.as_ref().clone().unwrap().as_obj();
-                    let args = [JValue::Object(&jni_joined_members).as_jni()];
+                    let args = [JValue::Object(&jni_joined_members).as_jni(),
+                                JValue::Object(&jni_creator).as_jni(),
+                                JValue::Object(&jni_era_id).as_jni(),
+                                JValue::Long(jni_max_devices).as_jni(),
+                                JValue::Long(jni_device_count).as_jni()];
                     env.call_method_unchecked(&original_object, JAVA_PEEK_RESULT.unwrap(), ReturnType::Primitive(Primitive::Void),&args);
                 }
 
-                info!("NYI PeekResult");
             }
             Event::GroupUpdate(GroupUpdate::Ended(client_id, reason)) => {
                 info!("NYI ENDED");
@@ -1266,13 +1300,15 @@ fn deserialize_to_group_member_info(
 pub unsafe extern "C" fn peekGroupCall(endpoint: i64,
     mp: JByteArray, gm: JByteArray
 ) -> i64 {
+    info!("PeekGroupCall in rust");
     let membership_proof = mp.to_vec_u8();
     let ser_group_members = gm.to_vec_u8();
     let group_members = deserialize_to_group_member_info(ser_group_members).unwrap();
     let endpoint = ptr_as_mut(endpoint as *mut CallEndpoint).unwrap();
-    info!("peekGroupCall, not fully implemented");
+    info!("peekGroupCall will now invoke pgc on call_manager, not fully implemented");
     let sfu = String::from("https://sfu.voip.signal.org");
     endpoint.call_manager.peek_group_call(1, sfu, membership_proof, group_members);
+    info!("PeekGroupCall in rust done");
     1
 }
 
