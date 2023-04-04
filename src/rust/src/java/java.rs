@@ -31,7 +31,7 @@ use crate::java::jtypes::{
 };
 
 use crate::lite::http;
-use crate::lite::sfu::UserId;
+use crate::lite::sfu::{GroupMember, UserId};
 use crate::native::{
     CallState, CallStateHandler, GroupUpdate, GroupUpdateHandler, NativeCallContext,
     NativePlatform, PeerId, SignalingSender,
@@ -48,8 +48,15 @@ use crate::webrtc::peer_connection_factory::{
 };
 use crate::webrtc::peer_connection_observer::NetworkRoute;
 
+const JAVA_UTIL_LIST_CLASS: &str = "java/util/List";
+const JAVA_UTIL_ARRAY_LIST_CLASS: &str = "java/util/ArrayList";
+
+static mut JAVA_UTIL_LIST_ADD: Option<JMethodID> = None;
+static mut JAVA_UTIL_ARRAY_LIST_CTOR: Option<JMethodID> = None;
+
 const JAVA_CALLBACK_CLASS: &str = "io/privacyresearch/tring/TringServiceImpl";
 static mut JAVA_HTTP: Option<JMethodID> = None;
+static mut JAVA_PEEK_RESULT: Option<JMethodID> = None;
 
 static mut target_object: Option<GlobalRef> = None;
 
@@ -76,6 +83,14 @@ pub unsafe extern "C" fn JNI_OnLoad(vm: JavaVM, _: *mut c_void) -> jint {
 
 unsafe fn init_cache(env: &mut JNIEnv) -> Result<()> {
     JAVA_HTTP = Some(env.get_method_id(JAVA_CALLBACK_CLASS, "makeHttpRequest","(Ljava/lang/String;BI[B[B)V")?);
+    JAVA_PEEK_RESULT = Some(env.get_method_id(JAVA_CALLBACK_CLASS, "gotPeekResult","(Ljava/lang/Object;)V")?);
+    JAVA_UTIL_LIST_ADD = Some(env.get_method_id(
+        JAVA_UTIL_LIST_CLASS,
+        "add",
+        "(Ljava/lang/Object;)Z",
+    )?);    
+    JAVA_UTIL_ARRAY_LIST_CTOR = Some(env.get_method_id(JAVA_UTIL_ARRAY_LIST_CLASS, "<init>", "()V")?);
+
     Ok(())
 }
 
@@ -163,11 +178,15 @@ fn make_http_request(url: String, method: i8, reqid: i32, data: Vec<u8>, body: V
                     JValue::Object(&jheaders).as_jni(),
                     JValue::Object(&jbody).as_jni()];
         let original_object = target_object.as_ref().clone().unwrap().as_obj();
-println!("Let's make a real http request, orig = {:?}",original_object);
+        println!("Let's make a real http request, orig = {:?}",original_object);
         env.call_method_unchecked(&original_object, JAVA_HTTP.unwrap(), ReturnType::Primitive(Primitive::Void),&args);
     }
 }
 
+fn handle_peek_response(body: Vec<u8>) {
+    unsafe {
+    }
+}
 // == END JNI
 
 fn init_logging() {
@@ -463,16 +482,46 @@ println!("Need to add to header: {} == {}", name.to_string(), value.to_string())
                 peek_result,
             }) => {
                 let peek_info = peek_result.unwrap_or_default();
+info!("peekresult, info: {:?}", peek_info);
                 let joined_members = peek_info.unique_users();
-unsafe{
-        let javavm = ptr_as_mut(jvm_box as *mut JavaVM).unwrap();
-        let mut env = javavm.attach_current_thread_as_daemon().unwrap();
-/*
-        let _ = env.with_local_frame(capacity, |_| {
-Ok(JObject::null())
-        });
-*/
-}
+info!("peekresult, JOINED: {:?}", joined_members);
+                unsafe{
+                    let javavm = ptr_as_mut(jvm_box as *mut JavaVM).unwrap();
+                    let mut env = javavm.attach_current_thread_as_daemon().unwrap();
+                    let jni_joined_members = env
+                            .new_object_unchecked(
+                                JAVA_UTIL_ARRAY_LIST_CLASS,
+                                JAVA_UTIL_ARRAY_LIST_CTOR.unwrap(),
+                                &[],
+                            )
+                            .unwrap();
+
+                    for joined_member in joined_members {
+                        let jni_opaque_user_id = match env.byte_array_from_slice(joined_member) {
+                            Ok(v) => JObject::from(v),
+                            Err(error) => {
+                                error!("{:?}", error); 
+                                continue;
+                            }
+                        };
+println!("GOT JM: {:?}", jni_opaque_user_id);
+                        env.call_method_unchecked(
+                            &jni_joined_members,
+                            JAVA_UTIL_LIST_ADD.unwrap(),
+                            ReturnType::Primitive(Primitive::Boolean),
+                            &[JValue::Object(&jni_opaque_user_id).as_jni()],
+                        )
+                        .expect(&format!(
+                            "Couldn't invoke method {} on class {}",
+                            "add", JAVA_UTIL_LIST_CLASS
+                        ));
+
+
+                    };
+                    let original_object = target_object.as_ref().clone().unwrap().as_obj();
+                    let args = [JValue::Object(&jni_joined_members).as_jni()];
+                    env.call_method_unchecked(&original_object, JAVA_PEEK_RESULT.unwrap(), ReturnType::Primitive(Primitive::Void),&args);
+                }
 
                 info!("NYI PeekResult");
             }
@@ -1190,16 +1239,40 @@ pub unsafe extern "C" fn fillRemoteVideoFrame(endpoint: i64, mybuffer: *mut u8, 
         0
     }
 }
+/// Convert a byte[] with 32-byte chunks in to a GroupMember struct vector. 
+fn deserialize_to_group_member_info(
+    mut serialized_group_members: Vec<u8>,
+) -> Result<Vec<GroupMember>> {
+    if serialized_group_members.len() % 81 != 0 {
+        error!(
+            "Serialized buffer is not a multiple of 81: {}",
+            serialized_group_members.len()
+        );
+        return Err(anyhow::Error::msg("Error deserializing groupmember"));
+    }
+
+    let mut group_members = Vec::new();
+    for chunk in serialized_group_members.chunks_exact_mut(81) {
+        group_members.push(GroupMember {
+            user_id: chunk[..16].into(),
+            member_id: chunk[16..].into(),
+        })
+    }
+
+    Ok(group_members)
+}
 
 #[no_mangle]
 pub unsafe extern "C" fn peekGroupCall(endpoint: i64,
-    mp: JByteArray,
+    mp: JByteArray, gm: JByteArray
 ) -> i64 {
     let membership_proof = mp.to_vec_u8();
+    let ser_group_members = gm.to_vec_u8();
+    let group_members = deserialize_to_group_member_info(ser_group_members).unwrap();
     let endpoint = ptr_as_mut(endpoint as *mut CallEndpoint).unwrap();
     info!("peekGroupCall, not fully implemented");
     let sfu = String::from("https://sfu.voip.signal.org");
-    endpoint.call_manager.peek_group_call(1, sfu, membership_proof, Vec::new());
+    endpoint.call_manager.peek_group_call(1, sfu, membership_proof, group_members);
     1
 }
 
@@ -1214,6 +1287,7 @@ pub unsafe extern "C" fn panamaReceivedHttpResponse(endpoint: i64,
         body,
     };
 
+    info!("receivedHttpResponse, request_id = {}, status_code = {}", request_id, status_code);
     let callendpoint = ptr_as_mut(endpoint as *mut CallEndpoint).unwrap();
     callendpoint.call_manager.received_http_response(request_id as u32, Some(response));
     1

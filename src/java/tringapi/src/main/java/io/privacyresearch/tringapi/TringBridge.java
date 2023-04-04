@@ -96,8 +96,8 @@ public class TringBridge {
         service.setArray();
     }
 
-    public void peekGroupCall(byte[] membershipProof) {
-        service.peekGroupCall(membershipProof);
+    public void peekGroupCall(byte[] membershipProof, byte[] members) {
+        service.peekGroupCall(membershipProof, members);
     }
     
 }

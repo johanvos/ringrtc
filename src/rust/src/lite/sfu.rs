@@ -99,6 +99,7 @@ struct SerializedPeekDeviceInfo {
 
 impl SerializedPeekInfo {
     fn deobfuscate(self, opaque_user_id_mappings: &[OpaqueUserIdMapping]) -> PeekInfo {
+info!("Need to deobfuscate {:?}", self.devices);
         let device_count = self.devices.len() as u32;
         PeekInfo {
             devices: self
@@ -220,6 +221,7 @@ pub type DemuxId = u32;
 /// Associates a group member's UserId with their GroupMemberId.
 /// This is passed from the client to RingRTC to be able to create OpaqueUserIdMappings.
 #[derive(Clone, Debug)]
+#[repr(C)]
 pub struct GroupMember {
     pub user_id: UserId,
     pub member_id: GroupMemberId,
@@ -332,6 +334,7 @@ pub fn peek(
                             "Got group call peek result with device count = {}",
                             deserialized.devices.len()
                         );
+info!("And devs = {:?}", deserialized.devices);
                         Ok(deserialized.deobfuscate(&opaque_user_id_mappings))
                     }
                     Err(status) if status == ResponseCode::GroupCallNotStarted => {

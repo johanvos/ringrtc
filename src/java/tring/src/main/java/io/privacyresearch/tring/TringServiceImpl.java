@@ -193,8 +193,9 @@ public class TringServiceImpl implements TringService {
     }
 
     @Override
-    public void peekGroupCall(byte[] membershipProof) {
-        tringlib_h.peekGroupCall(callEndpoint, toJByteArray(scope, membershipProof));
+    public void peekGroupCall(byte[] membershipProof, byte[] members) {
+        tringlib_h.peekGroupCall(callEndpoint, toJByteArray(scope, membershipProof)
+        , toJByteArray(scope, members));
     }
 
     // for testing only
@@ -331,6 +332,10 @@ byte[] destArr = new byte[(int)len];
         return answer;
     }
 
+    public void gotPeekResult(Object joined) {
+        System.err.println("JAVA: GOT PEEK RESULT");
+        System.err.println("JOINED: "+joined);
+    }
     public void makeHttpRequest(String uri, byte m, int reqid, byte[] headers, byte[] body) {
         System.err.println("MAKE REQUEST:"+ uri+" and method = "+m+", reqid = "+reqid+", headers = "+Arrays.toString(headers));
        ByteBuffer bb = ByteBuffer.wrap(headers);
@@ -349,7 +354,7 @@ byte[] destArr = new byte[(int)len];
             headerMap.put(key, val);
         }
         System.err.println("headers = " + headerMap);
-        System.err.println("body = " + Arrays.toString(body));
+        System.err.println("request body = " + Arrays.toString(body));
         HttpClient client = HttpClient.newHttpClient();
         HttpRequest.Builder builder = HttpRequest.newBuilder()
                 .uri(URI.create(uri));
@@ -361,7 +366,7 @@ byte[] destArr = new byte[(int)len];
         HttpResponse<String> response;
         try {
             response = client.send(request, BodyHandlers.ofString());
-            System.out.println(response.body());
+            System.out.println("response body = "+ response.body());
             tringlib_h.panamaReceivedHttpResponse(callEndpoint, reqid, response.statusCode(), toJByteArray(scope, response.body().getBytes()));
           //  ringrtcReceivedHttpResponse(callEndpoint, reqid, response.statusCode(), response.body().getBytes());
         } catch (IOException ex) {
