@@ -99,5 +99,9 @@ public class TringBridge {
     public void peekGroupCall(byte[] membershipProof, byte[] members) {
         service.peekGroupCall(membershipProof, members);
     }
+
+    public void createGroupCallClient() {
+        service.createGroupCallClient();
+    }
     
 }

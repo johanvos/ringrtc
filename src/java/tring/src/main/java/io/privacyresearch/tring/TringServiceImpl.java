@@ -201,6 +201,12 @@ public class TringServiceImpl implements TringService {
         , toJByteArray(scope, members));
     }
 
+    @Override
+    public void createGroupCallClient() {
+        LOG.info("delegate creategroupcallclient to rust");
+        tringlib_h.createGroupCallClient(callEndpoint);
+    }
+
     // for testing only
     public void setArray() {
         LOG.info("SET ARRAY");
@@ -341,9 +347,11 @@ byte[] destArr = new byte[(int)len];
         System.err.println("JOINED: "+joined);
         List<UUID> joinedMembers = new ArrayList<>();
         for (Object entry : joined) {
-            joinedMembers.add(UUID.nameUUIDFromBytes((byte[])entry));
+            ByteBuffer bb = ByteBuffer.wrap((byte[]) entry);
+            joinedMembers.add(new UUID(bb.getLong(), bb.getLong()));
         }
-        UUID creatorId = UUID.nameUUIDFromBytes(creator);
+        ByteBuffer bb = ByteBuffer.wrap(creator);
+        UUID creatorId = new UUID(bb.getLong(), bb.getLong());
         if (joined instanceof List joinedList) {
             joinedList.forEach(j -> System.err.println("joined: "+Arrays.toString((byte[])j)));
         }

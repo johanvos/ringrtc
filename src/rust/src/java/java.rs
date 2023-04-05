@@ -1328,4 +1328,10 @@ pub unsafe extern "C" fn panamaReceivedHttpResponse(endpoint: i64,
     callendpoint.call_manager.received_http_response(request_id as u32, Some(response));
     1
 }
+#[no_mangle]
+pub unsafe extern "C" fn createGroupCallClient(endpoint: i64) -> i64 {
+    info!("Need to create groupcallclient");
+    let callendpoint = ptr_as_mut(endpoint as *mut CallEndpoint).unwrap();
+    1
+}
 

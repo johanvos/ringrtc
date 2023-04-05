@@ -57,4 +57,6 @@ public interface TringService {
     public void setArray();
 
     public void peekGroupCall(byte[] membershipProof, byte[] members);
+
+    public void createGroupCallClient();
 }
