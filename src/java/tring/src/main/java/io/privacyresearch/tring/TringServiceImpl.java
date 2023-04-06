@@ -117,11 +117,11 @@ public class TringServiceImpl implements TringService {
                 toJByteArray(scope, opaque),
                 ageSec);
     }
-    
+
     @Override
-    public void receivedOpaqueMessage(byte[] senderUuid, int senderDeviceId, 
+    public void receivedOpaqueMessage(byte[] senderUuid, int senderDeviceId,
             int localDeviceId, byte[] opaque, long age) {
-        tringlib_h.receivedOpaqueMessage(callEndpoint, 
+        tringlib_h.receivedOpaqueMessage(callEndpoint,
                 toJByteArray(scope, senderUuid),
                 senderDeviceId,
                 localDeviceId,
@@ -202,9 +202,14 @@ public class TringServiceImpl implements TringService {
     }
 
     @Override
-    public void createGroupCallClient() {
+    public void createGroupCallClient(byte[] groupId, String sfu, byte[] hkdf) {
         LOG.info("delegate creategroupcallclient to rust");
-        tringlib_h.createGroupCallClient(callEndpoint);
+        long clientId = tringlib_h.createGroupCallClient(callEndpoint, toJByteArray(scope, groupId),
+                toJString(scope, sfu), toJByteArray(scope, hkdf));
+        LOG.info("Created client, id = "+clientId);
+        tringlib_h.dontconnect(callEndpoint, (int)clientId);
+        LOG.info("DONTConnected, id = "+clientId);
+
     }
 
     // for testing only
@@ -485,6 +490,8 @@ byte[] destArr = new byte[(int)len];
         return seg;
     }
 
+    private byte[] localGroupId;
+    
     class GenericCallbackImpl implements createCallEndpoint$genericCallback {
 
         @Override
@@ -497,6 +504,7 @@ byte[] destArr = new byte[(int)len];
                 int groupIdLen = bb.getInt();
                 byte[] groupId = new byte[groupIdLen];
                 bb.get(groupId);
+                TringServiceImpl.this.localGroupId = groupId;
                 long ringId = bb.getLong();
                 byte[] senderBytes = new byte[bb.remaining()-1];
                 bb.get(senderBytes);
@@ -506,6 +514,27 @@ byte[] destArr = new byte[(int)len];
                 System.err.println("senderBytes = "+Arrays.toString(senderBytes));
                 System.err.println("status = "+status);
                 api.groupCallUpdateRing(groupId, ringId, senderBytes, status);
+            }
+            if (opcode == 2) {
+                // connectionStateChange
+                ByteBuffer bb = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN);
+                int clientId = bb.getInt();
+                int connectionStatus = bb.getInt();
+                LOG.info("ConnectionState for "+clientId+" changed to " + connectionStatus);
+            }
+            if (opcode == 3) {
+                // requestMembershipProof
+                ByteBuffer bb = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN);
+                int clientId = bb.getInt();
+                byte[] token = api.requestGroupMembershipToken(TringServiceImpl.this.localGroupId);
+                tringlib_h.setMembershipProof(callEndpoint, clientId, toJByteArray(scope, token));
+            }
+            if (opcode == 4) {
+                // requestGroupMembers
+                ByteBuffer bb = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN);
+                int clientId = bb.getInt();
+                byte[] memberinfo = api.requestGroupMemberInfo(TringServiceImpl.this.localGroupId);
+                tringlib_h.setGroupMembers(callEndpoint, clientId, toJByteArray(scope, memberinfo));
             }
         }
 

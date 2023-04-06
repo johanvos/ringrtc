@@ -400,7 +400,6 @@ impl EventReporter {
                         body,
                     },
             } => {
-                info!("NYI SendHttpReq");
                 info!("Request id = {}", request_id);
                 info!("Requestmethod = {:?}", method);
                 info!("Requesturl = {:?}", url);
@@ -420,44 +419,43 @@ println!("Need to add to header: {} == {}", name.to_string(), value.to_string())
                 bodyb.extend(body.unwrap_or_default());
 
                 make_http_request(url, method as i8, request_id as i32, hdr, bodyb);
-/*
-                let mut payload:Vec<u8> = Vec::new();
-                let rid = request_id as i32;
-                payload.extend_from_slice(&rid.to_le_bytes());
-
-                payload.push(method as u8);
-
-                payload.extend(string_to_bytes(url));
-
-                let mut hdr:Vec<u8> = Vec::new();
-                for (name, value) in headers.iter() {
-                    hdr.extend(string_to_bytes(name.to_string()));
-                    hdr.extend(string_to_bytes(value.to_string()));
-                }
-                let hdrlen = hdr.len();
-                payload.extend_from_slice(&hdrlen.to_le_bytes());
-                payload.extend(hdr);
-
-                let bl = body.as_ref().map_or(0, |v| v.len());
-                payload.extend_from_slice(&bl.to_le_bytes());
-                payload.extend(body.unwrap_or_default());
-                let data = JArrayByte::new(payload);
-                unsafe {
-                    (self.genericCallback)(2, data);
-                }
-*/
             }
             Event::GroupUpdate(GroupUpdate::RequestMembershipProof(client_id)) => {
-                info!("NYI RMP");
+                info!("RMP");
+                let mut payload:Vec<u8> = Vec::new();
+                let cid: i32 = client_id.try_into().unwrap();
+                payload.extend_from_slice(&cid.to_le_bytes());
+                let data = JArrayByte::new(payload);
+                unsafe {
+                    (self.genericCallback)(3, data);
+                }
+                info!("invoked RequestMemebershipProof");
             }
             Event::GroupUpdate(GroupUpdate::RequestGroupMembers(client_id)) => {
-                info!("NYI RGM");
+                info!("RGM");
+                let mut payload:Vec<u8> = Vec::new();
+                let cid: i32 = client_id.try_into().unwrap();
+                payload.extend_from_slice(&cid.to_le_bytes());
+                let data = JArrayByte::new(payload);
+                unsafe {
+                    (self.genericCallback)(4, data);
+                }
+                info!("invoked RequestGroupMembers");
             }
             Event::GroupUpdate(GroupUpdate::ConnectionStateChanged(
                 client_id,
                 connection_state,
             )) => {
-                info!("NYI CSTATEChanged");
+                let mut payload:Vec<u8> = Vec::new();
+                let cid: i32 = client_id.try_into().unwrap();
+                payload.extend_from_slice(&cid.to_le_bytes());
+                let csid: i32 = connection_state as i32;
+                payload.extend_from_slice(&csid.to_le_bytes());
+                let data = JArrayByte::new(payload);
+                unsafe {
+                    (self.genericCallback)(2, data);
+                }
+                info!("invoked CSTATEChanged");
             }
             Event::GroupUpdate(GroupUpdate::NetworkRouteChanged(client_id, network_route)) => {
                 info!("NYI NetworkRouteChanged");
@@ -1328,10 +1326,67 @@ pub unsafe extern "C" fn panamaReceivedHttpResponse(endpoint: i64,
     callendpoint.call_manager.received_http_response(request_id as u32, Some(response));
     1
 }
+
 #[no_mangle]
-pub unsafe extern "C" fn createGroupCallClient(endpoint: i64) -> i64 {
+pub unsafe extern "C" fn createGroupCallClient(endpoint: i64,
+            group_id: JByteArray,
+            sf_url: JPString,
+            hkdf_extra_info: JByteArray) -> i64 {
     info!("Need to create groupcallclient");
     let callendpoint = ptr_as_mut(endpoint as *mut CallEndpoint).unwrap();
+    let audio_levels_interval = None;
+    let peer_connection_factory = callendpoint.peer_connection_factory.clone();
+    let outgoing_audio_track = callendpoint.outgoing_audio_track.clone();
+    let outgoing_video_track = callendpoint.outgoing_video_track.clone();
+    let incoming_video_sink = callendpoint.incoming_video_sink.clone();
+    info!("Need to create groupcallclient, got all params");
+        let result = callendpoint.call_manager.create_group_call_client(
+            group_id.to_vec_u8(),
+            sf_url.to_string(),
+            hkdf_extra_info.to_vec_u8(),
+            audio_levels_interval,
+            Some(peer_connection_factory),
+            outgoing_audio_track,
+            outgoing_video_track,
+            Some(incoming_video_sink),
+        );
+
+    let mut client_id = 0;
+    if let Ok(v) = result {
+        client_id = v;
+    }
+    client_id as i64
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn dontconnect(endpoint: i64,
+            client_id: u32) -> i64 {
+    info!("need to connect");
+    let callendpoint = ptr_as_mut(endpoint as *mut CallEndpoint).unwrap();
+    info!("ask callmanager to connect");
+    callendpoint.call_manager.connect(client_id);
+    info!("asked callmanager to connect");
     1
 }
 
+#[no_mangle]
+pub unsafe extern "C" fn setMembershipProof(endpoint: i64,
+            client_id: u32,
+            token: JByteArray) -> i64 {
+    info!("need to set_membershipProof");
+    let callendpoint = ptr_as_mut(endpoint as *mut CallEndpoint).unwrap();
+    callendpoint.call_manager.set_membership_proof(client_id, token.to_vec_u8());
+    1
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn setGroupMembers(endpoint: i64,
+            client_id: u32,
+            group_info: JByteArray) -> i64 {
+    info!("need to set_membershipProof");
+    let callendpoint = ptr_as_mut(endpoint as *mut CallEndpoint).unwrap();
+    let ser_group_members = group_info.to_vec_u8();
+    let group_members = deserialize_to_group_member_info(ser_group_members).unwrap();
+    callendpoint.call_manager.set_group_members(client_id, group_members);
+    1
+}

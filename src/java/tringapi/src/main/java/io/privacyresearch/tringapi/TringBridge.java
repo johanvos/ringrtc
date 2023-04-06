@@ -100,8 +100,8 @@ public class TringBridge {
         service.peekGroupCall(membershipProof, members);
     }
 
-    public void createGroupCallClient() {
-        service.createGroupCallClient();
+    public void createGroupCallClient(byte[] groupId, String sfu, byte[] hkdf) {
+        service.createGroupCallClient(groupId, sfu, hkdf);
     }
-    
+
 }

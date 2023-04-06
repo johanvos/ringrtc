@@ -21,4 +21,8 @@ public interface TringApi {
 
     public void receivedGroupCallPeekForRingingCheck(PeekInfo peekInfo);
 
+    public byte[] requestGroupMembershipToken(byte[] groupId);
+
+    public byte[] requestGroupMemberInfo(byte[] groupId);
+
 }

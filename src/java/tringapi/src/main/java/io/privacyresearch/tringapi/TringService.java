@@ -58,5 +58,6 @@ public interface TringService {
 
     public void peekGroupCall(byte[] membershipProof, byte[] members);
 
-    public void createGroupCallClient();
+    public void createGroupCallClient(byte[] groupId, String sfu, byte[] hkdf);
+
 }
