@@ -14,6 +14,9 @@ use std::{
     time::{Duration, Instant, SystemTime},
 };
 
+use std::fmt;
+use std::backtrace::Backtrace;
+
 use bytes::BytesMut;
 use hkdf::Hkdf;
 use num_enum::TryFromPrimitive;
@@ -420,6 +423,17 @@ pub struct Joined {
     pub creator: Option<UserId>,
 }
 
+impl fmt::Display for Joined {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "Joined {{ sfu_info: {:?}, local_demux_id: {:?}, server_dhe_pub_key: {:?}, hkdf_extra_info: {:?}, creator: {:?} }}",
+            self.sfu_info, self.local_demux_id, self.server_dhe_pub_key, self.hkdf_extra_info, self.creator
+        )
+    }
+}
+
+
 /// Communicates with the SFU using HTTP.
 pub struct HttpSfuClient {
     url: String,
@@ -455,6 +469,7 @@ impl HttpSfuClient {
         client: Client,
     ) {
         let hkdf_extra_info = self.hkdf_extra_info.clone();
+info!("JOINWITHHEADER");
         sfu::join(
             self.http_client.as_ref(),
             &self.url,
@@ -477,15 +492,19 @@ impl HttpSfuClient {
                         hkdf_extra_info,
                     }),
                     Err(http_status) if http_status == sfu::ResponseCode::RequestFailed => {
+info!("ERR1");
                         Err(RingRtcError::SfuClientRequestFailed.into())
                     }
                     Err(http_status) if http_status == sfu::ResponseCode::GroupCallFull => {
+info!("ERR2");
                         Err(RingRtcError::GroupCallFull.into())
                     }
                     Err(http_status) => {
+info!("ERR3");
                         Err(RingRtcError::UnexpectedResponseCodeFromSFu(http_status.code).into())
                     }
                 };
+info!("WILL NOW INVOKE SFU_CLIENT_JOINED");
                 client.on_sfu_client_joined(join_result);
             }),
         );
@@ -1314,12 +1333,14 @@ impl Client {
     }
 
     pub fn join(&self) {
+info!("[JVDBG] JOIN!");
         debug!(
             "group_call::Client(outer)::join(client_id: {})",
             self.client_id
         );
         let callback = self.clone();
         self.actor.send(move |state| {
+info!("[JVDBG] JOIN with state {:?}", state.join_state);
             debug!(
                 "group_call::Client(inner)::join(client_id: {})",
                 state.client_id
@@ -1875,15 +1896,19 @@ impl Client {
 
     // This should be called by the SfuClient after it has joined.
     pub fn on_sfu_client_joined(&self, joined: Result<Joined>) {
-        debug!(
-            "group_call::Client(outer)::on_sfu_client_joined(client_id: {})",
+        info!(
+            "[I]group_call::Client(outer)::on_sfu_client_joined(client_id: {})",
             self.client_id
         );
         self.actor.send(move |state| {
-            debug!(
-                "group_call::Client(inner)::on_sfu_client_joined(client_id: {})",
+            info!(
+                "[I]group_call::Client(inner)::on_sfu_client_joined(client_id: {})",
                 state.client_id
             );
+            info!("state = {:?}", state.join_state);
+
+            // info!("joined = {:?}", joined);
+            // dbg!(joined);
 
             if let Ok(Joined {
                 sfu_info,
@@ -1993,9 +2018,17 @@ impl Client {
                         warn!("The SFU completed joining more than once.");
                     }
                 };
-            } else {
-                Self::end(state, EndReason::SfuClientFailedToJoin);
-            }
+// } else { if let Err(error) = joined {
+    // error!("Error joining: {}", error);
+        // let backtrace = Backtrace::capture();
+        // println!("Backtrace: {:?}", backtrace);
+    // handle the `error` value if it is `Err`
+// }
+// }
+             } else {
+// info!("joined = {}", joined.unwrap().to_string());
+                 Self::end(state, EndReason::SfuClientFailedToJoin);
+             }
         });
     }
 

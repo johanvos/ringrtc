@@ -12,6 +12,7 @@ import java.lang.foreign.ValueLayout;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
+import java.net.http.HttpRequest.BodyPublisher;
 import java.net.http.HttpResponse;
 import java.net.http.HttpResponse.BodyHandlers;
 import java.nio.ByteBuffer;
@@ -24,6 +25,9 @@ import java.util.Map;
 import java.util.Map.Entry;
 import java.util.UUID;
 import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.logging.Level;
 import java.util.logging.Logger;
@@ -197,19 +201,41 @@ public class TringServiceImpl implements TringService {
 
     @Override
     public void peekGroupCall(byte[] membershipProof, byte[] members) {
+        LOG.info("Need to peek groupcall, memberslength = "+members.length);
         tringlib_h.peekGroupCall(callEndpoint, toJByteArray(scope, membershipProof)
         , toJByteArray(scope, members));
     }
 
+    // see Android IncomingGroupCallActionProcessor.handleAcceptCall
     @Override
-    public void createGroupCallClient(byte[] groupId, String sfu, byte[] hkdf) {
+    public long createGroupCallClient(byte[] groupId, String sfu, byte[] hkdf) {
         LOG.info("delegate creategroupcallclient to rust");
         long clientId = tringlib_h.createGroupCallClient(callEndpoint, toJByteArray(scope, groupId),
                 toJString(scope, sfu), toJByteArray(scope, hkdf));
-        LOG.info("Created client, id = "+clientId);
-        tringlib_h.dontconnect(callEndpoint, (int)clientId);
-        LOG.info("DONTConnected, id = "+clientId);
+        LOG.info("Created client, id = "+clientId+". Will connect now");
+        tringlib_h.setOutgoingAudioMuted(callEndpoint, (int)clientId, true);
+        tringlib_h.setOutgoingVideoMuted(callEndpoint, (int)clientId, true);
+        setGroupBandWidth((int)clientId, 2); // 2 = NORMAL
+        tringlib_h.group_connect(callEndpoint, (int)clientId);
+        LOG.info("Connected, id = "+clientId);
+        
+//        groupCall.setOutgoingVideoSource
+//                currentState.getVideoState().requireLocalSink(), currentState.getVideoState().requireCamera());
+//           groupCall.setOutgoingVideoMuted(answerWithVideo);
+//          groupCall.setOutgoingAudioMuted(!currentState.getLocalDeviceState().isMicrophoneEnabled());
+//           groupCall.setBandwidthMode(NetworkUtil.getCallingBandwidthMode(context, groupCall.getLocalDeviceState().getNetworkRoute().getLocalAdapterType()));
+        tringlib_h.setOutgoingAudioMuted(callEndpoint, (int)clientId, false);
+        tringlib_h.setOutgoingVideoMuted(callEndpoint, (int)clientId, false);
+        setGroupBandWidth((int)clientId, 2); // 2 = NORMAL
+                
+        tringlib_h.join(callEndpoint, (int)clientId);
+        return clientId;
 
+    }
+
+    @Override
+    public void setGroupBandWidth(int groupId, int bandwidthMode) {
+        tringlib_h.setBandwidthMode(callEndpoint, groupId, bandwidthMode);
     }
 
     // for testing only
@@ -346,26 +372,52 @@ byte[] destArr = new byte[(int)len];
         return answer;
     }
 
-    public void handlePeekResponse(List joined, byte[] creator, String era, long maxDevices, long deviceCount) {
-        System.err.println("JAVA: GOT PEEK RESULT");
-        System.err.println("era = " + era);
-        System.err.println("JOINED: "+joined);
+    private List<UUID> getUUIDs(List joined) {
         List<UUID> joinedMembers = new ArrayList<>();
         for (Object entry : joined) {
             ByteBuffer bb = ByteBuffer.wrap((byte[]) entry);
             joinedMembers.add(new UUID(bb.getLong(), bb.getLong()));
         }
+        return joinedMembers;
+    }
+    public void handlePeekChanged(List joined, byte[] creator, String era, long maxDevices, long deviceCount) {
+        LOG.info("JAVA: GOT PEEK CHANGED");
+        System.err.println("era = " + era);
+        System.err.println("JOINED: " + joined);
+        List<UUID> joinedMembers = getUUIDs(joined);
+        UUID creatorId = null;
+        if (creator != null) {
+            ByteBuffer bb = ByteBuffer.wrap(creator);
+            creatorId = new UUID(bb.getLong(), bb.getLong());
+        }
+        LOG.info("Joined: " + joinedMembers);
+        LOG.info("Creator: " + creatorId);
+        PeekInfo peekInfo = new PeekInfo(joinedMembers, creatorId, era, maxDevices, deviceCount);
+    }
+    
+    public void handlePeekResponse(List joined, byte[] creator, String era, long maxDevices, long deviceCount) {
+        LOG.info("JAVA: GOT PEEK RESULT");
+        System.err.println("era = " + era);
+        System.err.println("JOINED: "+joined);
+        List<UUID> joinedMembers = getUUIDs(joined);
+//        List<UUID> joinedMembers = new ArrayList<>();
+//        for (Object entry : joined) {
+//            ByteBuffer bb = ByteBuffer.wrap((byte[]) entry);
+//            joinedMembers.add(new UUID(bb.getLong(), bb.getLong()));
+//        }
         ByteBuffer bb = ByteBuffer.wrap(creator);
         UUID creatorId = new UUID(bb.getLong(), bb.getLong());
-        if (joined instanceof List joinedList) {
-            joinedList.forEach(j -> System.err.println("joined: "+Arrays.toString((byte[])j)));
-        }
+//        if (joined instanceof List joinedList) {
+//            joinedList.forEach(j -> System.err.println("joined: "+Arrays.toString((byte[])j)));
+//        }
         PeekInfo peekInfo = new PeekInfo(joinedMembers, creatorId,era, maxDevices, deviceCount);
         api.receivedGroupCallPeekForRingingCheck(peekInfo);
     }
     
     public void makeHttpRequest(String uri, byte m, int reqid, byte[] headers, byte[] body) {
-        System.err.println("MAKE REQUEST:"+ uri+" and method = "+m+", reqid = "+reqid+", headers = "+Arrays.toString(headers));
+      try {
+        LOG.info("MAKE REQUEST:"+ uri+" and method = "+m+", reqid = "+reqid+", headers = "+Arrays.toString(headers));
+       LOG.info("and body has size "+body.length+" and content = "+Arrays.toString(body));
        ByteBuffer bb = ByteBuffer.wrap(headers);
        Map<String, String> headerMap = new HashMap<>();
         while (bb.hasRemaining()) {
@@ -381,16 +433,28 @@ byte[] destArr = new byte[(int)len];
             String val = new String(b);
             headerMap.put(key, val);
         }
-        System.err.println("headers = " + headerMap);
-        System.err.println("request body = " + Arrays.toString(body));
+     
+        LOG.info("headers = " + headerMap);
         HttpClient client = HttpClient.newHttpClient();
         HttpRequest.Builder builder = HttpRequest.newBuilder()
                 .uri(URI.create(uri));
         for (Entry<String, String> entry : headerMap.entrySet()) {
             builder.header(entry.getKey(), entry.getValue());
         }
+        if (m == 0x1) {
+            ByteBuffer bodybb = ByteBuffer.wrap(body);
+
+            long bs = bodybb.getLong();
+            LOG.info("Body has size " + bs);
+            byte[] bd = new byte[(int) bs];
+            bodybb.get(bd);
+            LOG.info("request body = " + Arrays.toString(bd));
+
+            LOG.info("We need to PUT");
+            builder.PUT(HttpRequest.BodyPublishers.ofByteArray(bd));
+        }
         HttpRequest request = builder.build();
-        
+
         HttpResponse<String> response;
         try {
             response = client.send(request, BodyHandlers.ofString());
@@ -402,7 +466,10 @@ byte[] destArr = new byte[(int)len];
         } catch (InterruptedException ex) {
             Logger.getLogger(TringServiceImpl.class.getName()).log(Level.SEVERE, null, ex);
         }
-
+      } catch (Throwable t) {
+          LOG.severe("Whoops! "+t);
+          t.printStackTrace();
+      }
     }
 
     public static void makeStaticHttpRequest(String request) {
@@ -499,6 +566,7 @@ byte[] destArr = new byte[(int)len];
             byte[] bytes = fromJArrayByte(scope, data);
             LOG.info("Got generic  callback, opcode = " + opcode + " and data = " + Arrays.toString(bytes));
             if (opcode == 1) { 
+                LOG.info("This will lead to a groupCallUpdateRing");
                 // groupId 
                 ByteBuffer bb = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN);
                 int groupIdLen = bb.getInt();
@@ -524,10 +592,15 @@ byte[] destArr = new byte[(int)len];
             }
             if (opcode == 3) {
                 // requestMembershipProof
+                LOG.info("Handling requestMembershipProof");
                 ByteBuffer bb = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN);
                 int clientId = bb.getInt();
-                byte[] token = api.requestGroupMembershipToken(TringServiceImpl.this.localGroupId);
-                tringlib_h.setMembershipProof(callEndpoint, clientId, toJByteArray(scope, token));
+                Runnable r = () -> {
+                    byte[] token = api.requestGroupMembershipToken(TringServiceImpl.this.localGroupId);
+                    tringlib_h.setMembershipProof(callEndpoint, clientId, toJByteArray(scope, token));
+                };
+                executeRequest(r);
+                LOG.info("Handled requestMembershipProof");
             }
             if (opcode == 4) {
                 // requestGroupMembers
@@ -572,4 +645,11 @@ byte[] destArr = new byte[(int)len];
         tringlib_h.signalMessageSent(callEndpoint, callid);
     }
 
+    ExecutorService executor = Executors.newFixedThreadPool(1);
+
+    private void executeRequest(Runnable r) {
+        LOG.info("Executing request "+r);
+        Future<?> submit = executor.submit(r);
+        LOG.info("Execution state = " + submit.state());
+    }
 }

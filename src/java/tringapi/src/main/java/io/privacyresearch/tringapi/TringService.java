@@ -58,6 +58,8 @@ public interface TringService {
 
     public void peekGroupCall(byte[] membershipProof, byte[] members);
 
-    public void createGroupCallClient(byte[] groupId, String sfu, byte[] hkdf);
+    public long createGroupCallClient(byte[] groupId, String sfu, byte[] hkdf);
+
+    public void setGroupBandWidth(int clientId, int bandwidthMode);
 
 }

@@ -57,6 +57,7 @@ static mut JAVA_UTIL_ARRAY_LIST_CTOR: Option<JMethodID> = None;
 const JAVA_CALLBACK_CLASS: &str = "io/privacyresearch/tring/TringServiceImpl";
 static mut JAVA_HTTP: Option<JMethodID> = None;
 static mut JAVA_PEEK_RESULT: Option<JMethodID> = None;
+static mut JAVA_PEEK_CHANGED: Option<JMethodID> = None;
 
 static mut target_object: Option<GlobalRef> = None;
 
@@ -84,6 +85,7 @@ pub unsafe extern "C" fn JNI_OnLoad(vm: JavaVM, _: *mut c_void) -> jint {
 unsafe fn init_cache(env: &mut JNIEnv) -> Result<()> {
     JAVA_HTTP = Some(env.get_method_id(JAVA_CALLBACK_CLASS, "makeHttpRequest","(Ljava/lang/String;BI[B[B)V")?);
     JAVA_PEEK_RESULT = Some(env.get_method_id(JAVA_CALLBACK_CLASS, "handlePeekResponse","(Ljava/util/List;[BLjava/lang/String;JJ)V")?);
+    JAVA_PEEK_CHANGED = Some(env.get_method_id(JAVA_CALLBACK_CLASS, "handlePeekChanged","(Ljava/util/List;[BLjava/lang/String;JJ)V")?);
     JAVA_UTIL_LIST_ADD = Some(env.get_method_id(
         JAVA_UTIL_LIST_CLASS,
         "add",
@@ -178,7 +180,7 @@ fn make_http_request(url: String, method: i8, reqid: i32, data: Vec<u8>, body: V
                     JValue::Object(&jheaders).as_jni(),
                     JValue::Object(&jbody).as_jni()];
         let original_object = target_object.as_ref().clone().unwrap().as_obj();
-        println!("Let's make a real http request, orig = {:?}",original_object);
+        info!("Let's make a real http request, orig = {:?}",original_object);
         env.call_method_unchecked(&original_object, JAVA_HTTP.unwrap(), ReturnType::Primitive(Primitive::Void),&args);
     }
 }
@@ -408,7 +410,7 @@ impl EventReporter {
 
                 let mut hdr:Vec<u8> = Vec::new();
                 for (name, value) in headers.iter() {
-println!("Need to add to header: {} == {}", name.to_string(), value.to_string());
+info!("Need to add to header: {} == {}", name.to_string(), value.to_string());
                     hdr.extend(string_to_bytes(name.to_string()));
                     hdr.extend(string_to_bytes(value.to_string()));
                 }
@@ -473,7 +475,72 @@ println!("Need to add to header: {} == {}", name.to_string(), value.to_string())
                 client_id,
                 peek_info,
             }) => {
-                info!("NYI PeekChanged");
+                info!("PeekChanged");
+                let joined_members = peek_info.unique_users();
+info!("in rust, peekchanged, joined = {:?}", joined_members);
+                unsafe{
+                    let javavm = ptr_as_mut(jvm_box as *mut JavaVM).unwrap();
+                    let mut env = javavm.attach_current_thread_as_daemon().unwrap();
+                    let jni_joined_members = env
+                            .new_object_unchecked(
+                                JAVA_UTIL_ARRAY_LIST_CLASS,
+                                JAVA_UTIL_ARRAY_LIST_CTOR.unwrap(),
+                                &[],
+                            )
+                            .unwrap();
+
+                    for joined_member in joined_members {
+                        let jni_opaque_user_id = match env.byte_array_from_slice(joined_member) {
+                            Ok(v) => JObject::from(v),
+                            Err(error) => {
+                                error!("{:?}", error); 
+                                continue;
+                            }
+                        };
+                        env.call_method_unchecked(
+                            &jni_joined_members,
+                            JAVA_UTIL_LIST_ADD.unwrap(),
+                            ReturnType::Primitive(Primitive::Boolean),
+                            &[JValue::Object(&jni_opaque_user_id).as_jni()],
+                        )
+                        .expect(&format!(
+                            "Couldn't invoke method {} on class {}",
+                            "add", JAVA_UTIL_LIST_CLASS
+                        ));
+
+
+                    };
+                    let jni_creator = match peek_info.creator.as_ref() {
+                        None => JObject::null(),
+                        Some(creator) => match env.byte_array_from_slice(creator) {
+                            Ok(v) => JObject::from(v),
+                            Err(error) => {
+                                error!("{:?}", error); 
+                                return Ok(());
+                            }
+                        },
+                    };
+info!("in rust, peekchanged, creator = {:?}", jni_creator);
+                    let jni_era_id = match peek_info.era_id.as_ref() {
+                        None => JObject::null(),
+                        Some(era_id) => match env.new_string(era_id) {
+                            Ok(v) => JObject::from(v),
+                            Err(error) => {
+                                error!("{:?}", error); 
+                                return Ok(());
+                            }
+                        },
+                    };
+                    let jni_max_devices =50 as jlong;
+                    let jni_device_count = peek_info.device_count as jlong;
+                            let original_object = target_object.as_ref().clone().unwrap().as_obj();
+                            let args = [JValue::Object(&jni_joined_members).as_jni(),
+                                        JValue::Object(&jni_creator).as_jni(),
+                                        JValue::Object(&jni_era_id).as_jni(),
+                                        JValue::Long(jni_max_devices).as_jni(),
+                                        JValue::Long(jni_device_count).as_jni()];
+                    env.call_method_unchecked(&original_object, JAVA_PEEK_CHANGED.unwrap(), ReturnType::Primitive(Primitive::Void),&args);
+                }
             }
             Event::GroupUpdate(GroupUpdate::PeekResult {
                 request_id,
@@ -516,43 +583,34 @@ println!("GOT JM: {:?}", jni_opaque_user_id);
 
 
                     };
-            let jni_creator = match peek_info.creator.as_ref() {
-                None => JObject::null(),
-                Some(creator) => match env.byte_array_from_slice(creator) {
-                    Ok(v) => JObject::from(v),
-                    Err(error) => {
-                        error!("{:?}", error); 
-                        return Ok(());
-                    }
-                },
-            };
-            let jni_era_id = match peek_info.era_id.as_ref() {
-                None => JObject::null(),
-                Some(era_id) => match env.new_string(era_id) {
-                    Ok(v) => JObject::from(v),
-                    Err(error) => {
-                        error!("{:?}", error); 
-                        return Ok(());
-                    }
-                },
-            };
-            let jni_max_devices =50 as jlong;
-/*
-                match self.get_optional_u32_long_object(&env, peek_info.max_devices) {
-                    Ok(v) => v,
-                    Err(error) => {
-                        error!("{:?}", error);
-                        return Ok(JObject::null());
-                    }
-                };
-*/
-            let jni_device_count = peek_info.device_count as jlong;
-                    let original_object = target_object.as_ref().clone().unwrap().as_obj();
-                    let args = [JValue::Object(&jni_joined_members).as_jni(),
-                                JValue::Object(&jni_creator).as_jni(),
-                                JValue::Object(&jni_era_id).as_jni(),
-                                JValue::Long(jni_max_devices).as_jni(),
-                                JValue::Long(jni_device_count).as_jni()];
+                    let jni_creator = match peek_info.creator.as_ref() {
+                        None => JObject::null(),
+                        Some(creator) => match env.byte_array_from_slice(creator) {
+                            Ok(v) => JObject::from(v),
+                            Err(error) => {
+                                error!("{:?}", error); 
+                                return Ok(());
+                            }
+                        },
+                    };
+                    let jni_era_id = match peek_info.era_id.as_ref() {
+                        None => JObject::null(),
+                        Some(era_id) => match env.new_string(era_id) {
+                            Ok(v) => JObject::from(v),
+                            Err(error) => {
+                                error!("{:?}", error); 
+                                return Ok(());
+                            }
+                        },
+                    };
+                    let jni_max_devices =50 as jlong;
+                    let jni_device_count = peek_info.device_count as jlong;
+                            let original_object = target_object.as_ref().clone().unwrap().as_obj();
+                            let args = [JValue::Object(&jni_joined_members).as_jni(),
+                                        JValue::Object(&jni_creator).as_jni(),
+                                        JValue::Object(&jni_era_id).as_jni(),
+                                        JValue::Long(jni_max_devices).as_jni(),
+                                        JValue::Long(jni_device_count).as_jni()];
                     env.call_method_unchecked(&original_object, JAVA_PEEK_RESULT.unwrap(), ReturnType::Primitive(Primitive::Void),&args);
                 }
 
@@ -1294,6 +1352,9 @@ fn deserialize_to_group_member_info(
     Ok(group_members)
 }
 
+// Group Calls
+
+
 #[no_mangle]
 pub unsafe extern "C" fn peekGroupCall(endpoint: i64,
     mp: JByteArray, gm: JByteArray
@@ -1332,7 +1393,7 @@ pub unsafe extern "C" fn createGroupCallClient(endpoint: i64,
             group_id: JByteArray,
             sf_url: JPString,
             hkdf_extra_info: JByteArray) -> i64 {
-    info!("Need to create groupcallclient");
+    info!("We Need to create groupcallclient");
     let callendpoint = ptr_as_mut(endpoint as *mut CallEndpoint).unwrap();
     let audio_levels_interval = None;
     let peer_connection_factory = callendpoint.peer_connection_factory.clone();
@@ -1355,13 +1416,48 @@ pub unsafe extern "C" fn createGroupCallClient(endpoint: i64,
     if let Ok(v) = result {
         client_id = v;
     }
+    info!("And return the client_id");
     client_id as i64
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn dontconnect(endpoint: i64,
+pub unsafe extern "C" fn setOutgoingAudioMuted (endpoint: i64,
+            client_id: u32, muted: bool) -> i64 {
+    info!("need to set audio muted to {}", muted);
+    let callendpoint = ptr_as_mut(endpoint as *mut CallEndpoint).unwrap();
+    callendpoint.outgoing_audio_track.set_enabled(!muted);
+    callendpoint.call_manager.set_outgoing_audio_muted(client_id, muted);
+    info!("Done setting outgoingaudiomuted");
+    1
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn setOutgoingVideoMuted (endpoint: i64,
+            client_id: u32, muted: bool) -> i64 {
+    info!("need to set video muted to {}", muted);
+    let callendpoint = ptr_as_mut(endpoint as *mut CallEndpoint).unwrap();
+    callendpoint.outgoing_video_track.set_enabled(!muted);
+    callendpoint.call_manager.set_outgoing_video_muted(client_id, muted);
+    info!("Done setting outgoingvideomuted");
+    1
+}
+
+/*
+#[no_mangle]
+pub unsafe extern "C" fn setBandwidthMode (endpoint: i64,
+            client_id: u32, mode: i32) -> i64 {
+    info!("need to set bandwidth mode to {}", mode);
+    let callendpoint = ptr_as_mut(endpoint as *mut CallEndpoint).unwrap();
+    callendpoint.call_manager.set_bandwidth_mode(client_id, BandwithMode::from_i32(mode));
+    info!("Done setting bandwidthmode");
+    1
+}
+*/
+
+#[no_mangle]
+pub unsafe extern "C" fn group_connect(endpoint: i64,
             client_id: u32) -> i64 {
-    info!("need to connect");
+    info!("need to connect!");
     let callendpoint = ptr_as_mut(endpoint as *mut CallEndpoint).unwrap();
     info!("ask callmanager to connect");
     callendpoint.call_manager.connect(client_id);
@@ -1388,5 +1484,23 @@ pub unsafe extern "C" fn setGroupMembers(endpoint: i64,
     let ser_group_members = group_info.to_vec_u8();
     let group_members = deserialize_to_group_member_info(ser_group_members).unwrap();
     callendpoint.call_manager.set_group_members(client_id, group_members);
+    1
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn setBandwidthMode(endpoint: i64,
+            client_id: u32,
+            bandwidth_mode: BandwidthMode) -> i64 {
+    info!("need to set_bandwidth_mode");
+    let callendpoint = ptr_as_mut(endpoint as *mut CallEndpoint).unwrap();
+    callendpoint.call_manager.set_bandwidth_mode(client_id, bandwidth_mode);
+    1
+}
+#[no_mangle]
+pub unsafe extern "C" fn join(endpoint: i64,
+            client_id: u32) -> i64 {
+    info!("need to join");
+    let callendpoint = ptr_as_mut(endpoint as *mut CallEndpoint).unwrap();
+    callendpoint.call_manager.join(client_id);
     1
 }
