@@ -2037,6 +2037,7 @@ info!("[JVDBG] JOIN with state {:?}", state.join_state);
         sender_user_id: UserId,
         message: protobuf::group_call::DeviceToDevice,
     ) {
+info!("GROUPCALL has on_signaling_message_received");
         debug!(
             "group_call::Client(outer)::on_signaling_message_received(client_id: {})",
             self.client_id
@@ -2061,6 +2062,7 @@ info!("[JVDBG] JOIN with state {:?}", state.join_state);
                         warn!("on_signaling_message_received(): ignoring media receive key with wrong length");
                         return;
                     }
+info!("GROUPCALL STILL OK");
                     if let Ok(ratchet_counter) = ratchet_counter.try_into() {
                         let mut secret = frame_crypto::Secret::default();
                         secret.copy_from_slice(&secret_vec);
@@ -2530,6 +2532,7 @@ info!("[JVDBG] JOIN with state {:?}", state.join_state);
         secret: frame_crypto::Secret,
     ) {
         if let Some(device) = state.remote_devices.find_by_demux_id_mut(demux_id) {
+info!("Matching device. user_id = {:?} and deviceuserid = {:?}", user_id, device.user_id);
             if device.user_id == user_id {
                 info!(
                     "Adding media receive key from {}. client_id: {}",
@@ -2550,7 +2553,7 @@ info!("[JVDBG] JOIN with state {:?}", state.join_state);
                 }
             } else {
                 warn!("Ignoring received media key from user because the demux ID {} doesn't make sense", demux_id);
-                debug!("  user_id: {}", uuid_to_string(&user_id));
+                info!("  user_id: {}", uuid_to_string(&user_id));
             }
         } else {
             info!(
