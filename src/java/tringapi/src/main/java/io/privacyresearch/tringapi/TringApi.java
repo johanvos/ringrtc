@@ -1,6 +1,7 @@
 package io.privacyresearch.tringapi;
 
 import java.util.List;
+import java.util.UUID;
 
 /**
  *
@@ -24,5 +25,7 @@ public interface TringApi {
     public byte[] requestGroupMembershipToken(byte[] groupId);
 
     public byte[] requestGroupMemberInfo(byte[] groupId);
+    
+    public void sendOpaqueCallMessage(UUID recipient, byte[] opaque, int urgency);
 
 }

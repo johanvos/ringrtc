@@ -1738,10 +1738,14 @@ where
                 ..
             } => {
                 if let Some(group_id) = group_call_message.group_id.as_ref() {
-                    let group_calls = self
+                    let mut group_calls = self
                         .group_call_by_client_id
                         .lock()
                         .expect("lock group_call_by_client_id");
+info!("We're looking for a groupcall with id {:?}", group_id);
+            for (client_id, call) in group_calls.iter_mut() {
+info!("And v = {:?}, {:?}", client_id, call.group_id);
+            }
                     let group_call = group_calls.values().find(|c| &c.group_id == group_id);
                     match group_call {
                         Some(call) => {
