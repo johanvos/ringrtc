@@ -118,8 +118,8 @@ struct EventReporter {
     report: Arc<dyn Fn() + Send + Sync>,
 }
 
-fn string_to_bytes(v:String) -> Vec<u8> {
-    let mut answer:Vec<u8> = Vec::new();
+fn string_to_bytes(v: String) -> Vec<u8> {
+    let mut answer: Vec<u8> = Vec::new();
     let ul = v.len();
     answer.extend_from_slice(&ul.to_le_bytes());
     answer.extend_from_slice(v.as_bytes());
@@ -258,7 +258,7 @@ impl EventReporter {
                 info!("Requesturl = {:?}", url);
                 info!("Requestheaders = {:?}", headers);
                 info!("Requestbody = {:?}", body);
-                let mut payload:Vec<u8> = Vec::new();
+                let mut payload: Vec<u8> = Vec::new();
                 let rid = request_id as i32;
                 payload.extend_from_slice(&rid.to_le_bytes());
 
@@ -266,7 +266,7 @@ impl EventReporter {
 
                 payload.extend(string_to_bytes(url));
 
-                let mut hdr:Vec<u8> = Vec::new();
+                let mut hdr: Vec<u8> = Vec::new();
                 for (name, value) in headers.iter() {
                     hdr.extend(string_to_bytes(name.to_string()));
                     hdr.extend(string_to_bytes(value.to_string()));
@@ -328,8 +328,11 @@ impl EventReporter {
                 sender,
                 update,
             }) => {
-                info!("[JV] GroupUpdate, gid = {:?}, ringid = {:?}, sender = {:?}, update = {:?}", group_id, ring_id, sender, update);
-                let mut payload:Vec<u8> = Vec::new();
+                info!(
+                    "[JV] GroupUpdate, gid = {:?}, ringid = {:?}, sender = {:?}, update = {:?}",
+                    group_id, ring_id, sender, update
+                );
+                let mut payload: Vec<u8> = Vec::new();
                 let glen: i32 = group_id.len().try_into().unwrap();
                 payload.extend_from_slice(&glen.to_le_bytes());
                 payload.extend(group_id);
@@ -706,13 +709,20 @@ pub unsafe extern "C" fn receivedOpaqueMessage(
     sender_device_id: DeviceId,
     local_device_id: DeviceId,
     opaque: JByteArray,
-    message_age_sec: u64) -> i64 {
+    message_age_sec: u64,
+) -> i64 {
     info!("Create opaque message!");
     let message = opaque.to_vec_u8();
     let sender_uuid = sender_juuid.to_vec_u8();
     let callendpoint = ptr_as_mut(endpoint as *mut CallEndpoint).unwrap();
-    callendpoint.call_manager.received_call_message(sender_uuid, sender_device_id, local_device_id, message, Duration::from_secs(message_age_sec));
-1
+    callendpoint.call_manager.received_call_message(
+        sender_uuid,
+        sender_device_id,
+        local_device_id,
+        message,
+        Duration::from_secs(message_age_sec),
+    );
+    1
 }
 
 #[no_mangle]
@@ -1020,13 +1030,13 @@ pub unsafe extern "C" fn fillRemoteVideoFrame(endpoint: i64, mybuffer: *mut u8, 
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn peekGroupCall(endpoint: i64,
-    mp: JByteArray,
-) -> i64 {
+pub unsafe extern "C" fn peekGroupCall(endpoint: i64, mp: JByteArray) -> i64 {
     let membership_proof = mp.to_vec_u8();
     let endpoint = ptr_as_mut(endpoint as *mut CallEndpoint).unwrap();
     info!("peekGroupCall, not fully implemented");
     let sfu = String::from("https://sfu.voip.signal.org");
-    endpoint.call_manager.peek_group_call(1, sfu, membership_proof, Vec::new());
+    endpoint
+        .call_manager
+        .peek_group_call(1, sfu, membership_proof, Vec::new());
     1
 }
