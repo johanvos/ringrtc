@@ -357,12 +357,12 @@ byte[] destArr = new byte[(int)len];
     }
 
     static MemorySegment toJString(MemorySession ms, String src) {
-        MemorySegment answer = JString.allocate(ms);
+        MemorySegment answer = JPString.allocate(ms);
         byte[] bytes = src.getBytes();
-        JString.len$set(answer, bytes.length);
+        JPString.len$set(answer, bytes.length);
         MemorySegment byteBuffer = MemorySegment.allocateNative(bytes.length, ms);
         MemorySegment.copy(bytes, 0, byteBuffer, ValueLayout.JAVA_BYTE, 0, bytes.length);
-        JString.buff$set(answer, byteBuffer.address());
+        JPString.buff$set(answer, byteBuffer.address());
         return answer;
     }
 
