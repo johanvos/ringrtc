@@ -12,11 +12,9 @@ import java.lang.foreign.ValueLayout;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
-import java.net.http.HttpRequest.BodyPublisher;
 import java.net.http.HttpResponse;
 import java.net.http.HttpResponse.BodyHandlers;
 import java.nio.ByteBuffer;
-import java.nio.ByteOrder;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
@@ -46,9 +44,11 @@ public class TringServiceImpl implements TringService {
     private long activeCallId;
     static String libName = "unknown";
     BlockingQueue<TringFrame> frameQueue = new LinkedBlockingQueue();
-    
-    private int clientId;
 
+    // state for GroupCall, should be moved.
+    private int clientId = -1;
+    private byte[] localGroupId;
+    
     private static final Logger LOG = Logger.getLogger(TringServiceImpl.class.getName());
 
     static {
@@ -67,10 +67,6 @@ public class TringServiceImpl implements TringService {
     public TringServiceImpl() {
         // no-op
     }
-
-//    public static TringService provider() {
-//        return instance;
-//    }
     
     @Override
     public String getVersionInfo() {
@@ -127,12 +123,8 @@ public class TringServiceImpl implements TringService {
     @Override
     public void receivedOpaqueMessage(byte[] senderUuid, int senderDeviceId,
             int localDeviceId, byte[] opaque, long age) {
-        tringlib_h.receivedOpaqueMessage(callEndpoint,
-                toJByteArray(scope, senderUuid),
-                senderDeviceId,
-                localDeviceId,
-                toJByteArray(scope, opaque),
-                age);
+        tringlib_h.receivedOpaqueMessage(callEndpoint, toJByteArray(scope, senderUuid),
+            senderDeviceId, localDeviceId, toJByteArray(scope, opaque), age);
     }
 
     @Override
@@ -185,7 +177,11 @@ public class TringServiceImpl implements TringService {
     @Override
     public void hangupCall() {
         LOG.info("Hangup the call");
-        tringlib_h.hangupCall(callEndpoint);
+        if (clientId < 0) {
+            tringlib_h.hangupCall(callEndpoint);
+        } else {
+            tringlib_h.disconnect(callEndpoint, clientId);
+        }
     }
 
     /**
@@ -224,21 +220,11 @@ public class TringServiceImpl implements TringService {
         LOG.info("Ask for video");
         requestVideo(callEndpoint, (int)clientId, 1);
         LOG.info("Asked for video");
-//        groupCall.setOutgoingVideoSource
-//                currentState.getVideoState().requireLocalSink(), currentState.getVideoState().requireCamera());
-//           groupCall.setOutgoingVideoMuted(answerWithVideo);
-//          groupCall.setOutgoingAudioMuted(!currentState.getLocalDeviceState().isMicrophoneEnabled());
-//           groupCall.setBandwidthMode(NetworkUtil.getCallingBandwidthMode(context, groupCall.getLocalDeviceState().getNetworkRoute().getLocalAdapterType()));
         tringlib_h.setOutgoingAudioMuted(callEndpoint, (int)clientId, false);
         tringlib_h.setOutgoingVideoMuted(callEndpoint, (int)clientId, false);
-        tringlib_h.setOutgoingVideoEnabled(callEndpoint, true);
-
-                
         setGroupBandWidth((int)clientId, 2); // 2 = NORMAL
-                
         tringlib_h.join(callEndpoint, (int)clientId);
         return clientId;
-
     }
 
     @Override
@@ -388,10 +374,9 @@ byte[] destArr = new byte[(int)len];
         }
         return joinedMembers;
     }
+
     public void handlePeekChanged(List joined, byte[] creator, String era, long maxDevices, long deviceCount) {
-        LOG.info("JAVA: GOT PEEK CHANGED");
-        System.err.println("era = " + era);
-        System.err.println("JOINED: " + joined);
+        LOG.info("In java: GOT PEEK CHANGED");
         List<UUID> joinedMembers = getUUIDs(joined);
         UUID creatorId = null;
         if (creator != null) {
@@ -402,26 +387,16 @@ byte[] destArr = new byte[(int)len];
         LOG.info("Creator: " + creatorId);
         PeekInfo peekInfo = new PeekInfo(joinedMembers, creatorId, era, maxDevices, deviceCount);
     }
-    
+
     public void handlePeekResponse(List joined, byte[] creator, String era, long maxDevices, long deviceCount) {
         LOG.info("JAVA: GOT PEEK RESULT");
-        System.err.println("era = " + era);
-        System.err.println("JOINED: "+joined);
         List<UUID> joinedMembers = getUUIDs(joined);
-//        List<UUID> joinedMembers = new ArrayList<>();
-//        for (Object entry : joined) {
-//            ByteBuffer bb = ByteBuffer.wrap((byte[]) entry);
-//            joinedMembers.add(new UUID(bb.getLong(), bb.getLong()));
-//        }
         ByteBuffer bb = ByteBuffer.wrap(creator);
         UUID creatorId = new UUID(bb.getLong(), bb.getLong());
-//        if (joined instanceof List joinedList) {
-//            joinedList.forEach(j -> System.err.println("joined: "+Arrays.toString((byte[])j)));
-//        }
         PeekInfo peekInfo = new PeekInfo(joinedMembers, creatorId,era, maxDevices, deviceCount);
         api.receivedGroupCallPeekForRingingCheck(peekInfo);
     }
-    
+
     public void handleRemoteDevicesChanged(List devices) {
         LOG.info("Devices changed into "+devices);
         for (Object entry : devices) {
@@ -432,74 +407,59 @@ byte[] destArr = new byte[(int)len];
             executeRequest(r);
         }
     }
-    
+
     public void makeHttpRequest(String uri, byte m, int reqid, byte[] headers, byte[] body) {
-      try {
-        LOG.info("MAKE REQUEST:"+ uri+" and method = "+m+", reqid = "+reqid+", headers = "+Arrays.toString(headers));
-       LOG.info("and body has size "+body.length+" and content = "+Arrays.toString(body));
-       ByteBuffer bb = ByteBuffer.wrap(headers);
-       Map<String, String> headerMap = new HashMap<>();
-        while (bb.hasRemaining()) {
-            int size = bb.getInt();
-            System.err.println("Got size: " + size);
-            byte[] b = new byte[size];
-            bb.get(b);
-            String key = new String(b);
-            size = bb.getInt();
-            System.err.println("Got valsize: " + size);
-            b = new byte[size];
-            bb.get(b);
-            String val = new String(b);
-            headerMap.put(key, val);
-        }
-     
-        LOG.info("headers = " + headerMap);
-        HttpClient client = HttpClient.newHttpClient();
-        HttpRequest.Builder builder = HttpRequest.newBuilder()
-                .uri(URI.create(uri));
-        for (Entry<String, String> entry : headerMap.entrySet()) {
-            builder.header(entry.getKey(), entry.getValue());
-        }
-        if (m == 0x1) {
-            ByteBuffer bodybb = ByteBuffer.wrap(body);
-
-            long bs = bodybb.getLong();
-            LOG.info("Body has size " + bs);
-            byte[] bd = new byte[(int) bs];
-            bodybb.get(bd);
-            LOG.info("request body = " + Arrays.toString(bd));
-
-            LOG.info("We need to PUT");
-            builder.PUT(HttpRequest.BodyPublishers.ofByteArray(bd));
-        }
-        HttpRequest request = builder.build();
-
-        HttpResponse<String> response;
         try {
-            response = client.send(request, BodyHandlers.ofString());
-            System.out.println("response body = "+ response.body());
-            tringlib_h.panamaReceivedHttpResponse(callEndpoint, reqid, response.statusCode(), toJByteArray(scope, response.body().getBytes()));
-          //  ringrtcReceivedHttpResponse(callEndpoint, reqid, response.statusCode(), response.body().getBytes());
-        } catch (IOException ex) {
-            Logger.getLogger(TringServiceImpl.class.getName()).log(Level.SEVERE, null, ex);
-        } catch (InterruptedException ex) {
-            Logger.getLogger(TringServiceImpl.class.getName()).log(Level.SEVERE, null, ex);
+            LOG.info("MAKE REQUEST:" + uri + " and method = " + m + ", reqid = " + reqid + "and body has size " + body.length);
+            ByteBuffer bb = ByteBuffer.wrap(headers);
+            Map<String, String> headerMap = new HashMap<>();
+            while (bb.hasRemaining()) {
+                byte[] b = new byte[bb.getInt()];
+                bb.get(b);
+                String key = new String(b);
+                b = new byte[bb.getInt()];
+                bb.get(b);
+                String val = new String(b);
+                headerMap.put(key, val);
+            }
+            HttpClient client = HttpClient.newHttpClient();
+            HttpRequest.Builder builder = HttpRequest.newBuilder()
+                    .uri(URI.create(uri));
+            for (Entry<String, String> entry : headerMap.entrySet()) {
+                builder.header(entry.getKey(), entry.getValue());
+            }
+            if (m == 0x1) { // PUT
+                ByteBuffer bodybb = ByteBuffer.wrap(body);
+                long bs = bodybb.getLong();
+                byte[] bd = new byte[(int) bs];
+                bodybb.get(bd);
+                LOG.info("We need to PUT");
+                builder.PUT(HttpRequest.BodyPublishers.ofByteArray(bd));
+            }
+            HttpRequest request = builder.build();
+
+            HttpResponse<String> response;
+            try {
+                response = client.send(request, BodyHandlers.ofString());
+                tringlib_h.panamaReceivedHttpResponse(callEndpoint, reqid, response.statusCode(), toJByteArray(scope, response.body().getBytes()));
+            } catch (IOException | InterruptedException ex) {
+               LOG.log(Level.SEVERE, null, ex);
+            }
+        } catch (Throwable t) {
+            LOG.severe("Whoops! " + t);
+            t.printStackTrace();
         }
-      } catch (Throwable t) {
-          LOG.severe("Whoops! "+t);
-          t.printStackTrace();
-      }
     }
 
-    public static void makeStaticHttpRequest(String request) {
+    public static void nomakeStaticHttpRequest(String request) {
         System.err.println("MAKE STATIC REQUEST: request");
     }  
 
     private native void initializeNative(long callEndpoint);
     private native void ringrtcReceivedHttpResponse(long callEndpoint, long requestid, int status, byte[] body);
-    
+
     private native void requestVideo(long callEndpoint, int clientid, int demuxid);
-    
+
     Addressable createStatusCallback() {
         StatusCallbackImpl sci = new StatusCallbackImpl();
         MemorySegment seg = createCallEndpoint$statusCallback.allocate(sci, scope);
@@ -578,46 +538,36 @@ byte[] destArr = new byte[(int)len];
         return seg;
     }
 
-    private byte[] localGroupId;
-    
     class GenericCallbackImpl implements createCallEndpoint$genericCallback {
 
         @Override
-        public void apply(int opcode, MemorySegment data) { 
+        public void apply(int opcode, MemorySegment data) {
             byte[] bytes = fromJArrayByte(scope, data);
             LOG.info("Got generic  callback, opcode = " + opcode + " and data = " + Arrays.toString(bytes));
-            if (opcode == 1) { 
+            if (opcode == 1) {
                 LOG.info("This will lead to a groupCallUpdateRing");
-                // groupId 
-            //    ByteBuffer bb = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN);
                 ByteBuffer bb = ByteBuffer.wrap(bytes);
                 int groupIdLen = bb.getInt();
                 byte[] groupId = new byte[groupIdLen];
                 bb.get(groupId);
                 TringServiceImpl.this.localGroupId = groupId;
                 long ringId = bb.getLong();
-                byte[] senderBytes = new byte[bb.remaining()-1];
+                byte[] senderBytes = new byte[bb.remaining() - 1];
                 bb.get(senderBytes);
                 byte status = bb.get();
-                System.err.println("GroupId = "+Arrays.toString(groupId));
-                System.err.println("ringid = "+ringId);
-                System.err.println("senderBytes = "+Arrays.toString(senderBytes));
-                System.err.println("status = "+status);
                 api.groupCallUpdateRing(groupId, ringId, senderBytes, status);
             }
             if (opcode == 2) {
                 // connectionStateChange
-            //    ByteBuffer bb = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN);
                 ByteBuffer bb = ByteBuffer.wrap(bytes);
                 int clientId = bb.getInt();
                 int connectionStatus = bb.getInt();
-                LOG.info("ConnectionState for "+clientId+" changed to " + connectionStatus);
+                LOG.info("ConnectionState for " + clientId + " changed to " + connectionStatus);
             }
             if (opcode == 3) {
                 // requestMembershipProof
                 LOG.info("Handling requestMembershipProof");
                 ByteBuffer bb = ByteBuffer.wrap(bytes);
-          //      ByteBuffer bb = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN);
                 int clientId = bb.getInt();
                 Runnable r = () -> {
                     byte[] token = api.requestGroupMembershipToken(TringServiceImpl.this.localGroupId);
@@ -628,7 +578,6 @@ byte[] destArr = new byte[(int)len];
             }
             if (opcode == 4) {
                 // requestGroupMembers
-          //      ByteBuffer bb = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN);
                 ByteBuffer bb = ByteBuffer.wrap(bytes);
                 int clientId = bb.getInt();
                 byte[] memberinfo = api.requestGroupMemberInfo(TringServiceImpl.this.localGroupId);
@@ -638,18 +587,11 @@ byte[] destArr = new byte[(int)len];
                 // sendCallMessage
                 ByteBuffer bb = ByteBuffer.wrap(bytes);
                 UUID recipient = new UUID(bb.getLong(), bb.getLong());
-//
-//                int recipientuuidlen = bb.getInt();
-//                byte[] recuuidb = new byte[recipientuuidlen];
-//                LOG.info("Recipient byte len = "+recipientuuidlen);
-//                bb.get(recuuidb);
                 int mlen = bb.getInt();
                 byte[] messageb = new byte[mlen];
-                LOG.info("messageb byte len = "+mlen);
+                LOG.info("Will send opaquecallmessage to " + recipient+" with byte len = " + mlen);
                 bb.get(messageb);
-                LOG.info("SENDCALLMSG, recuuid = "+recipient+" and msg = "+Arrays.toString(messageb));
-              api.sendOpaqueCallMessage(recipient, messageb, 0);
-
+                api.sendOpaqueCallMessage(recipient, messageb, 0);
             }
         }
 

@@ -1,14 +1,13 @@
 #![allow(unused_parens)]
 
-use jni::objects::{GlobalRef, JMethodID, JObject, JStaticMethodID, JString, JValue};
+use jni::objects::{GlobalRef, JMethodID, JObject, JValue};
 use jni::signature::{Primitive, ReturnType};
-use jni::sys::{jbyteArray, jint, jlong, JNI_VERSION_1_6};
+use jni::sys::{jint, jlong, JNI_VERSION_1_6};
 use jni::{JNIEnv, JavaVM};
 
 use std::collections::HashMap;
 use std::convert::TryInto;
 
-use std::mem::transmute;
 use std::os::raw::c_void;
 use std::slice;
 use std::sync::atomic::AtomicBool;
@@ -44,7 +43,7 @@ use crate::webrtc::media::{
 use crate::webrtc::peer_connection::AudioLevel;
 
 use crate::webrtc::peer_connection_factory::{
-    self as pcf, AudioDevice, IceServer, PeerConnectionFactory,
+    self as pcf, IceServer, PeerConnectionFactory,
 };
 use crate::webrtc::peer_connection_observer::NetworkRoute;
 
@@ -72,15 +71,13 @@ pub unsafe extern "C" fn JNI_OnLoad(vm: JavaVM, _: *mut c_void) -> jint {
     println!("pLoading RUST tringlib");
 
     let mut env = vm.get_env().expect("Cannot get reference to the JNIEnv");
-    let mut r = JNI_VERSION_1_6;
 
     init_cache(&mut env);
 
     let java_box = Box::new(vm);
-    // let boxx: Result<*mut JavaVM> = Ok(Box::into_raw(java_box));
 
     jvm_box = Box::into_raw(java_box) as i64;
-    r
+    JNI_VERSION_1_6
 }
 
 unsafe fn init_cache(env: &mut JNIEnv) -> Result<()> {
@@ -107,8 +104,8 @@ unsafe fn init_cache(env: &mut JNIEnv) -> Result<()> {
 pub unsafe extern "C" fn Java_io_privacyresearch_tring_TringServiceImpl_initializeNative(
     mut env: JNIEnv,
     obj: JObject,
-    endpoint: i64) {
-    println!("Initialize native RUST layer, obj = {:?}", obj);
+    _endpoint: i64) {
+    info!("Initialize native RUST layer, obj = {:?}", obj);
     target_object = env.new_global_ref(obj).ok();
 }
 
@@ -116,8 +113,8 @@ pub unsafe extern "C" fn Java_io_privacyresearch_tring_TringServiceImpl_initiali
 #[no_mangle]
 #[allow(non_snake_case)]
 pub unsafe extern "C" fn Java_io_privacyresearch_tring_TringServiceImpl_requestVideo(
-    mut env: JNIEnv,
-    obj: JObject,
+    _env: JNIEnv,
+    _obj: JObject,
     endpoint: i64,
     clientid: u32,
     demuxid: u32) {
@@ -1569,6 +1566,18 @@ pub unsafe extern "C" fn join(endpoint: i64,
     info!("need to join");
     let callendpoint = ptr_as_mut(endpoint as *mut CallEndpoint).unwrap();
     callendpoint.call_manager.join(client_id);
+    1
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn disconnect(endpoint: i64,
+            client_id: u32) -> i64 {
+    info!("want to disconnect");
+    let callendpoint = ptr_as_mut(endpoint as *mut CallEndpoint).unwrap();
+    callendpoint.outgoing_audio_track.set_enabled(false);
+    callendpoint.outgoing_video_track.set_enabled(false);
+    callendpoint.outgoing_video_track.set_content_hint(false);
+    callendpoint.call_manager.disconnect(client_id);
     1
 }
 

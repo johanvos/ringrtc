@@ -99,7 +99,6 @@ struct SerializedPeekDeviceInfo {
 
 impl SerializedPeekInfo {
     fn deobfuscate(self, opaque_user_id_mappings: &[OpaqueUserIdMapping]) -> PeekInfo {
-info!("Need to deobfuscate {:?}", self.devices);
         let device_count = self.devices.len() as u32;
         PeekInfo {
             devices: self
@@ -175,7 +174,6 @@ impl JoinResponse {
         deserialized: SerializedJoinResponse,
         opaque_user_id_mappings: &[OpaqueUserIdMapping],
     ) -> Self {
-        info!("NEED TO CREATE JOINRESPONSE with FROM! des = {:?}, mappings = {:?}", deserialized, opaque_user_id_mappings);
         Self {
             client_demux_id: deserialized.client_demux_id,
             server_addresses: vec![SocketAddr::new(
@@ -298,21 +296,15 @@ fn participants_url_from_sfu_url(sfu_url: &str) -> String {
     )
 }
 
-fn parse_http_json_response<'a, D: Deserialize<'a> + std::fmt::Debug >(
+fn parse_http_json_response<'a, D: Deserialize<'a>>(
     response: Option<&'a http::Response>,
 ) -> Result<D, http::ResponseStatus> {
-info!("DESERIALIZE HTTPJSONRESPONSE!");
     let response = response.ok_or(ResponseCode::RequestFailed)?;
-info!("BODY = {:?}", &response.body);
     if !response.status.is_success() {
         return Err(response.status);
     }
-info!("Status ok");
     let deserialized = serde_json::from_slice(&response.body)
-        .map_err(|e| {
-            info!("ERRRRR {:?}", e);
-            ResponseCode::InvalidResponseBodyJson})?;
-info!("Response = {:?}", deserialized);
+        .map_err(|_| ResponseCode::InvalidResponseBodyJson)?;
     Ok(deserialized)
 }
 
@@ -341,7 +333,6 @@ pub fn peek(
                             "Got group call peek result with device count = {}",
                             deserialized.devices.len()
                         );
-info!("And devs = {:?}", deserialized.devices);
                         Ok(deserialized.deobfuscate(&opaque_user_id_mappings))
                     }
                     Err(status) if status == ResponseCode::GroupCallNotStarted => {
@@ -396,18 +387,9 @@ pub fn join(
             ),
         },
         Box::new(move |http_response| {
-info!("SFUPARSESTART, resp = {:?}", http_response );
             let result = parse_http_json_response::<SerializedJoinResponse>(http_response.as_ref())
                 .map(|deserialized| JoinResponse::from(deserialized, &opaque_user_id_mappings));
-match result {
-    Ok(res) => {
-        info!("YES");
-            result_callback(Ok(res))
-    }
-    Err(err) => info!("NO, err = {:?}", err),
-};
-info!("SFUPARSEDONE");
-            // result_callback(result)
+            result_callback(result)
         }),
     );
 }

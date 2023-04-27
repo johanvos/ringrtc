@@ -14,9 +14,6 @@ use std::{
     time::{Duration, Instant, SystemTime},
 };
 
-use std::fmt;
-use std::backtrace::Backtrace;
-
 use bytes::BytesMut;
 use hkdf::Hkdf;
 use num_enum::TryFromPrimitive;
@@ -423,17 +420,6 @@ pub struct Joined {
     pub creator: Option<UserId>,
 }
 
-impl fmt::Display for Joined {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "Joined {{ sfu_info: {:?}, local_demux_id: {:?}, server_dhe_pub_key: {:?}, hkdf_extra_info: {:?}, creator: {:?} }}",
-            self.sfu_info, self.local_demux_id, self.server_dhe_pub_key, self.hkdf_extra_info, self.creator
-        )
-    }
-}
-
-
 /// Communicates with the SFU using HTTP.
 pub struct HttpSfuClient {
     url: String,
@@ -469,7 +455,6 @@ impl HttpSfuClient {
         client: Client,
     ) {
         let hkdf_extra_info = self.hkdf_extra_info.clone();
-info!("JOINWITHHEADER");
         sfu::join(
             self.http_client.as_ref(),
             &self.url,
@@ -492,19 +477,15 @@ info!("JOINWITHHEADER");
                         hkdf_extra_info,
                     }),
                     Err(http_status) if http_status == sfu::ResponseCode::RequestFailed => {
-info!("ERR1");
                         Err(RingRtcError::SfuClientRequestFailed.into())
                     }
                     Err(http_status) if http_status == sfu::ResponseCode::GroupCallFull => {
-info!("ERR2");
                         Err(RingRtcError::GroupCallFull.into())
                     }
                     Err(http_status) => {
-info!("ERR3");
                         Err(RingRtcError::UnexpectedResponseCodeFromSFu(http_status.code).into())
                     }
                 };
-info!("WILL NOW INVOKE SFU_CLIENT_JOINED");
                 client.on_sfu_client_joined(join_result);
             }),
         );
@@ -1333,14 +1314,12 @@ impl Client {
     }
 
     pub fn join(&self) {
-info!("[JVDBG] JOIN!");
         debug!(
             "group_call::Client(outer)::join(client_id: {})",
             self.client_id
         );
         let callback = self.clone();
         self.actor.send(move |state| {
-info!("[JVDBG] JOIN with state {:?}", state.join_state);
             debug!(
                 "group_call::Client(inner)::join(client_id: {})",
                 state.client_id
@@ -1896,19 +1875,15 @@ info!("[JVDBG] JOIN with state {:?}", state.join_state);
 
     // This should be called by the SfuClient after it has joined.
     pub fn on_sfu_client_joined(&self, joined: Result<Joined>) {
-        info!(
-            "[I]group_call::Client(outer)::on_sfu_client_joined(client_id: {})",
+        debug!(
+            "group_call::Client(outer)::on_sfu_client_joined(client_id: {})",
             self.client_id
         );
         self.actor.send(move |state| {
-            info!(
-                "[I]group_call::Client(inner)::on_sfu_client_joined(client_id: {})",
+            debug!(
+                "group_call::Client(inner)::on_sfu_client_joined(client_id: {})",
                 state.client_id
             );
-            info!("state = {:?}", state.join_state);
-
-            // info!("joined = {:?}", joined);
-            // dbg!(joined);
 
             if let Ok(Joined {
                 sfu_info,
@@ -2018,17 +1993,9 @@ info!("[JVDBG] JOIN with state {:?}", state.join_state);
                         warn!("The SFU completed joining more than once.");
                     }
                 };
-// } else { if let Err(error) = joined {
-    // error!("Error joining: {}", error);
-        // let backtrace = Backtrace::capture();
-        // println!("Backtrace: {:?}", backtrace);
-    // handle the `error` value if it is `Err`
-// }
-// }
-             } else {
-// info!("joined = {}", joined.unwrap().to_string());
-                 Self::end(state, EndReason::SfuClientFailedToJoin);
-             }
+            } else {
+                Self::end(state, EndReason::SfuClientFailedToJoin);
+            }
         });
     }
 
@@ -2037,7 +2004,6 @@ info!("[JVDBG] JOIN with state {:?}", state.join_state);
         sender_user_id: UserId,
         message: protobuf::group_call::DeviceToDevice,
     ) {
-info!("GROUPCALL has on_signaling_message_received");
         debug!(
             "group_call::Client(outer)::on_signaling_message_received(client_id: {})",
             self.client_id
@@ -2062,7 +2028,6 @@ info!("GROUPCALL has on_signaling_message_received");
                         warn!("on_signaling_message_received(): ignoring media receive key with wrong length");
                         return;
                     }
-info!("GROUPCALL STILL OK");
                     if let Ok(ratchet_counter) = ratchet_counter.try_into() {
                         let mut secret = frame_crypto::Secret::default();
                         secret.copy_from_slice(&secret_vec);
@@ -2532,7 +2497,6 @@ info!("GROUPCALL STILL OK");
         secret: frame_crypto::Secret,
     ) {
         if let Some(device) = state.remote_devices.find_by_demux_id_mut(demux_id) {
-info!("Matching device. user_id = {:?} and deviceuserid = {:?}", user_id, device.user_id);
             if device.user_id == user_id {
                 info!(
                     "Adding media receive key from {}. client_id: {}",
@@ -2553,7 +2517,7 @@ info!("Matching device. user_id = {:?} and deviceuserid = {:?}", user_id, device
                 }
             } else {
                 warn!("Ignoring received media key from user because the demux ID {} doesn't make sense", demux_id);
-                info!("  user_id: {}", uuid_to_string(&user_id));
+                debug!("  user_id: {}", uuid_to_string(&user_id));
             }
         } else {
             info!(

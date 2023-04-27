@@ -25,7 +25,7 @@ public interface TringApi {
     public byte[] requestGroupMembershipToken(byte[] groupId);
 
     public byte[] requestGroupMemberInfo(byte[] groupId);
-    
+
     public void sendOpaqueCallMessage(UUID recipient, byte[] opaque, int urgency);
 
 }
