@@ -25,6 +25,9 @@ public interface TringService {
     public void receivedOffer(String peerId, long callId, int senderDeviceId, int receiverDeviceId,
             byte[] senderKey, byte[] receiverKey, byte[] opaque);
 
+    public void receivedOpaqueMessage(byte[] senderUuid, int senderDeviceId, 
+            int localDeviceId, byte[] opaque, long age);
+
     public void receivedAnswer(String peerId, long callId, int senderDeviceId,
             byte[] senderKey, byte[] receiverKey, byte[] opaque);
     public long startOutgoingCall(long callId, String peerId, int localDeviceId, boolean enableVideo);
@@ -52,5 +55,11 @@ public interface TringService {
     public void sendVideoFrame(int w, int h, int pixelFormat, byte[] raw);
 
     public void setArray();
+
+    public void peekGroupCall(byte[] membershipProof, byte[] members);
+
+    public long createGroupCallClient(byte[] groupId, String sfu, byte[] hkdf);
+
+    public void setGroupBandWidth(int clientId, int bandwidthMode);
 
 }

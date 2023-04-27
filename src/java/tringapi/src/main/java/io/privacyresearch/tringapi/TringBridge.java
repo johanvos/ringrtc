@@ -66,6 +66,11 @@ public class TringBridge {
         service.receivedOffer(peerId, callId, senderDeviceId, receiverDeviceId, senderKey, receiverKey, opaque);
     }
 
+    public void receivedOpaqueMessage(byte[] uuid, int senderDeviceId, int receiverDeviceId,
+            byte[] opaque, long ageMessage) {
+        service.receivedOpaqueMessage(uuid, senderDeviceId, receiverDeviceId, opaque, ageMessage);
+    }
+
     public void receivedAnswer(String peerId, long callId, int receiverDeviceId,
             byte[] senderKey, byte[] receiverKey, byte[] opaque) {
         service.receivedAnswer(peerId, callId, receiverDeviceId, senderKey, receiverKey, opaque);
@@ -90,4 +95,17 @@ public class TringBridge {
     public void setArray() {
         service.setArray();
     }
+
+    public void peekGroupCall(byte[] membershipProof, byte[] members) {
+        service.peekGroupCall(membershipProof, members);
+    }
+
+    public long createGroupCallClient(byte[] groupId, String sfu, byte[] hkdf) {
+        return service.createGroupCallClient(groupId, sfu, hkdf);
+    }
+
+    public void setGroupBandWidth(int clientId, int bandwidthMode) {
+        service.setGroupBandWidth(clientId, bandwidthMode);
+    }
+
 }

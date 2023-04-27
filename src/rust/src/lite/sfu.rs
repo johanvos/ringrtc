@@ -220,6 +220,7 @@ pub type DemuxId = u32;
 /// Associates a group member's UserId with their GroupMemberId.
 /// This is passed from the client to RingRTC to be able to create OpaqueUserIdMappings.
 #[derive(Clone, Debug)]
+#[repr(C)]
 pub struct GroupMember {
     pub user_id: UserId,
     pub member_id: GroupMemberId,

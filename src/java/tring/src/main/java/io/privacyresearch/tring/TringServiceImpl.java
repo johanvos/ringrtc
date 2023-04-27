@@ -1,19 +1,35 @@
 package io.privacyresearch.tring;
 
+import io.privacyresearch.tringapi.PeekInfo;
 import io.privacyresearch.tringapi.TringFrame;
 import io.privacyresearch.tringapi.TringService;
+import java.io.IOException;
 import java.lang.foreign.Addressable;
 import java.lang.foreign.MemoryAddress;
 import java.lang.foreign.MemorySegment;
 import java.lang.foreign.MemorySession;
 import java.lang.foreign.ValueLayout;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.net.http.HttpResponse.BodyHandlers;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.Map.Entry;
+import java.util.UUID;
 import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.logging.Level;
 import java.util.logging.Logger;
+import java.util.stream.Collectors;
 
 public class TringServiceImpl implements TringService {
 
@@ -29,6 +45,10 @@ public class TringServiceImpl implements TringService {
     static String libName = "unknown";
     BlockingQueue<TringFrame> frameQueue = new LinkedBlockingQueue();
 
+    // state for GroupCall, should be moved.
+    private int clientId = -1;
+    private byte[] localGroupId;
+    
     private static final Logger LOG = Logger.getLogger(TringServiceImpl.class.getName());
 
     static {
@@ -47,11 +67,8 @@ public class TringServiceImpl implements TringService {
     public TringServiceImpl() {
         // no-op
     }
-
-    public static TringService provider() {
-        return instance;
-    }
     
+    @Override
     public String getVersionInfo() {
         return "TringServiceImpl using "+libName;
     }
@@ -70,9 +87,11 @@ public class TringServiceImpl implements TringService {
         scope = MemorySession.openShared();
         tringlib_h.initRingRTC(toJString(scope, "Hello from Java"));
         this.callEndpoint = tringlib_h.createCallEndpoint(createStatusCallback(), 
-                createAnswerCallback(), createOfferCallback(), createIceUpdateCallback(),
+                createAnswerCallback(), createOfferCallback(),
+                createIceUpdateCallback(),
+                createGenericCallback(),
         createVideoFrameCallback());
-        
+        initializeNative(this.callEndpoint);
     }
     
     private void processAudioInputs() {
@@ -99,6 +118,13 @@ public class TringServiceImpl implements TringService {
                 receiverDeviceId, toJByteArray(scope, senderKey), toJByteArray(scope, receiverKey),
                 toJByteArray(scope, opaque),
                 ageSec);
+    }
+
+    @Override
+    public void receivedOpaqueMessage(byte[] senderUuid, int senderDeviceId,
+            int localDeviceId, byte[] opaque, long age) {
+        tringlib_h.receivedOpaqueMessage(callEndpoint, toJByteArray(scope, senderUuid),
+            senderDeviceId, localDeviceId, toJByteArray(scope, opaque), age);
     }
 
     @Override
@@ -151,7 +177,11 @@ public class TringServiceImpl implements TringService {
     @Override
     public void hangupCall() {
         LOG.info("Hangup the call");
-        tringlib_h.hangupCall(callEndpoint);
+        if (clientId < 0) {
+            tringlib_h.hangupCall(callEndpoint);
+        } else {
+            tringlib_h.disconnect(callEndpoint, clientId);
+        }
     }
 
     /**
@@ -165,6 +195,41 @@ public class TringServiceImpl implements TringService {
         tringlib_h.setAudioOutput(callEndpoint, (short)0);
         tringlib_h.createOutgoingCall(callEndpoint, toJString(scope, peerId), enableVideo, localDeviceId, callId);
         return callId;
+    }
+
+    @Override
+    public void peekGroupCall(byte[] membershipProof, byte[] members) {
+        LOG.info("Need to peek groupcall, memberslength = "+members.length);
+        tringlib_h.peekGroupCall(callEndpoint, toJByteArray(scope, membershipProof)
+        , toJByteArray(scope, members));
+    }
+
+    // see Android IncomingGroupCallActionProcessor.handleAcceptCall
+    @Override
+    public long createGroupCallClient(byte[] nogroupId, String sfu, byte[] hkdf) {
+        LOG.info("delegate creategroupcallclient to rust, groupId = "+Arrays.toString(localGroupId));
+        long myclientId = tringlib_h.createGroupCallClient(callEndpoint, toJByteArray(scope, localGroupId),
+                toJString(scope, sfu), toJByteArray(scope, hkdf));
+        this.clientId = (int)myclientId;
+        LOG.info("Created client, id = "+clientId+". Will connect now");
+        tringlib_h.setOutgoingAudioMuted(callEndpoint, (int)clientId, true);
+        tringlib_h.setOutgoingVideoMuted(callEndpoint, (int)clientId, true);
+        setGroupBandWidth((int)clientId, 2); // 2 = NORMAL
+        tringlib_h.group_connect(callEndpoint, (int)clientId);
+        LOG.info("Connected, id = "+clientId);
+        LOG.info("Ask for video");
+        requestVideo(callEndpoint, (int)clientId, 1);
+        LOG.info("Asked for video");
+        tringlib_h.setOutgoingAudioMuted(callEndpoint, (int)clientId, false);
+        tringlib_h.setOutgoingVideoMuted(callEndpoint, (int)clientId, false);
+        setGroupBandWidth((int)clientId, 2); // 2 = NORMAL
+        tringlib_h.join(callEndpoint, (int)clientId);
+        return clientId;
+    }
+
+    @Override
+    public void setGroupBandWidth(int groupId, int bandwidthMode) {
+        tringlib_h.setBandwidthMode(callEndpoint, groupId, bandwidthMode);
     }
 
     // for testing only
@@ -301,11 +366,106 @@ byte[] destArr = new byte[(int)len];
         return answer;
     }
 
+    private List<UUID> getUUIDs(List joined) {
+        List<UUID> joinedMembers = new ArrayList<>();
+        for (Object entry : joined) {
+            ByteBuffer bb = ByteBuffer.wrap((byte[]) entry);
+            joinedMembers.add(new UUID(bb.getLong(), bb.getLong()));
+        }
+        return joinedMembers;
+    }
+
+    public void handlePeekChanged(List joined, byte[] creator, String era, long maxDevices, long deviceCount) {
+        LOG.info("In java: GOT PEEK CHANGED");
+        List<UUID> joinedMembers = getUUIDs(joined);
+        UUID creatorId = null;
+        if (creator != null) {
+            ByteBuffer bb = ByteBuffer.wrap(creator);
+            creatorId = new UUID(bb.getLong(), bb.getLong());
+        }
+        LOG.info("Joined: " + joinedMembers);
+        LOG.info("Creator: " + creatorId);
+        PeekInfo peekInfo = new PeekInfo(joinedMembers, creatorId, era, maxDevices, deviceCount);
+    }
+
+    public void handlePeekResponse(List joined, byte[] creator, String era, long maxDevices, long deviceCount) {
+        LOG.info("JAVA: GOT PEEK RESULT");
+        List<UUID> joinedMembers = getUUIDs(joined);
+        ByteBuffer bb = ByteBuffer.wrap(creator);
+        UUID creatorId = new UUID(bb.getLong(), bb.getLong());
+        PeekInfo peekInfo = new PeekInfo(joinedMembers, creatorId,era, maxDevices, deviceCount);
+        api.receivedGroupCallPeekForRingingCheck(peekInfo);
+    }
+
+    public void handleRemoteDevicesChanged(List devices) {
+        LOG.info("Devices changed into "+devices);
+        for (Object entry : devices) {
+            ByteBuffer bb = ByteBuffer.wrap((byte[]) entry);
+            int demuxId = bb.getInt();
+            LOG.info("Schedule call to request video from "+demuxId);
+            Runnable r = () -> requestVideo(callEndpoint, clientId, demuxId);
+            executeRequest(r);
+        }
+    }
+
+    public void makeHttpRequest(String uri, byte m, int reqid, byte[] headers, byte[] body) {
+        try {
+            LOG.info("MAKE REQUEST:" + uri + " and method = " + m + ", reqid = " + reqid + "and body has size " + body.length);
+            ByteBuffer bb = ByteBuffer.wrap(headers);
+            Map<String, String> headerMap = new HashMap<>();
+            while (bb.hasRemaining()) {
+                byte[] b = new byte[bb.getInt()];
+                bb.get(b);
+                String key = new String(b);
+                b = new byte[bb.getInt()];
+                bb.get(b);
+                String val = new String(b);
+                headerMap.put(key, val);
+            }
+            HttpClient client = HttpClient.newHttpClient();
+            HttpRequest.Builder builder = HttpRequest.newBuilder()
+                    .uri(URI.create(uri));
+            for (Entry<String, String> entry : headerMap.entrySet()) {
+                builder.header(entry.getKey(), entry.getValue());
+            }
+            if (m == 0x1) { // PUT
+                ByteBuffer bodybb = ByteBuffer.wrap(body);
+                long bs = bodybb.getLong();
+                byte[] bd = new byte[(int) bs];
+                bodybb.get(bd);
+                LOG.info("We need to PUT");
+                builder.PUT(HttpRequest.BodyPublishers.ofByteArray(bd));
+            }
+            HttpRequest request = builder.build();
+
+            HttpResponse<String> response;
+            try {
+                response = client.send(request, BodyHandlers.ofString());
+                tringlib_h.panamaReceivedHttpResponse(callEndpoint, reqid, response.statusCode(), toJByteArray(scope, response.body().getBytes()));
+            } catch (IOException | InterruptedException ex) {
+               LOG.log(Level.SEVERE, null, ex);
+            }
+        } catch (Throwable t) {
+            LOG.severe("Whoops! " + t);
+            t.printStackTrace();
+        }
+    }
+
+    public static void nomakeStaticHttpRequest(String request) {
+        System.err.println("MAKE STATIC REQUEST: request");
+    }  
+
+    private native void initializeNative(long callEndpoint);
+    private native void ringrtcReceivedHttpResponse(long callEndpoint, long requestid, int status, byte[] body);
+
+    private native void requestVideo(long callEndpoint, int clientid, int demuxid);
+
     Addressable createStatusCallback() {
         StatusCallbackImpl sci = new StatusCallbackImpl();
         MemorySegment seg = createCallEndpoint$statusCallback.allocate(sci, scope);
         return seg.address();
     }
+
 
 
     class StatusCallbackImpl implements createCallEndpoint$statusCallback {
@@ -372,6 +532,70 @@ byte[] destArr = new byte[(int)len];
             LOG.info("iceUpdate done!");
         }
     }
+    MemorySegment createGenericCallback() {
+        GenericCallbackImpl sci = new GenericCallbackImpl();
+        MemorySegment seg = createCallEndpoint$genericCallback.allocate(sci, scope);
+        return seg;
+    }
+
+    class GenericCallbackImpl implements createCallEndpoint$genericCallback {
+
+        @Override
+        public void apply(int opcode, MemorySegment data) {
+            byte[] bytes = fromJArrayByte(scope, data);
+            LOG.info("Got generic  callback, opcode = " + opcode + " and data = " + Arrays.toString(bytes));
+            if (opcode == 1) {
+                LOG.info("This will lead to a groupCallUpdateRing");
+                ByteBuffer bb = ByteBuffer.wrap(bytes);
+                int groupIdLen = bb.getInt();
+                byte[] groupId = new byte[groupIdLen];
+                bb.get(groupId);
+                TringServiceImpl.this.localGroupId = groupId;
+                long ringId = bb.getLong();
+                byte[] senderBytes = new byte[bb.remaining() - 1];
+                bb.get(senderBytes);
+                byte status = bb.get();
+                api.groupCallUpdateRing(groupId, ringId, senderBytes, status);
+            }
+            if (opcode == 2) {
+                // connectionStateChange
+                ByteBuffer bb = ByteBuffer.wrap(bytes);
+                int clientId = bb.getInt();
+                int connectionStatus = bb.getInt();
+                LOG.info("ConnectionState for " + clientId + " changed to " + connectionStatus);
+            }
+            if (opcode == 3) {
+                // requestMembershipProof
+                LOG.info("Handling requestMembershipProof");
+                ByteBuffer bb = ByteBuffer.wrap(bytes);
+                int clientId = bb.getInt();
+                Runnable r = () -> {
+                    byte[] token = api.requestGroupMembershipToken(TringServiceImpl.this.localGroupId);
+                    tringlib_h.setMembershipProof(callEndpoint, clientId, toJByteArray(scope, token));
+                };
+                executeRequest(r);
+                LOG.info("Handled requestMembershipProof");
+            }
+            if (opcode == 4) {
+                // requestGroupMembers
+                ByteBuffer bb = ByteBuffer.wrap(bytes);
+                int clientId = bb.getInt();
+                byte[] memberinfo = api.requestGroupMemberInfo(TringServiceImpl.this.localGroupId);
+                tringlib_h.setGroupMembers(callEndpoint, clientId, toJByteArray(scope, memberinfo));
+            }
+            if (opcode == 5) {
+                // sendCallMessage
+                ByteBuffer bb = ByteBuffer.wrap(bytes);
+                UUID recipient = new UUID(bb.getLong(), bb.getLong());
+                int mlen = bb.getInt();
+                byte[] messageb = new byte[mlen];
+                LOG.info("Will send opaquecallmessage to " + recipient+" with byte len = " + mlen);
+                bb.get(messageb);
+                api.sendOpaqueCallMessage(recipient, messageb, 0);
+            }
+        }
+
+    }
 
     Addressable createVideoFrameCallback() {
         VideoFrameCallbackImpl sci = new VideoFrameCallbackImpl();
@@ -405,4 +629,11 @@ byte[] destArr = new byte[(int)len];
         tringlib_h.signalMessageSent(callEndpoint, callid);
     }
 
+    ExecutorService executor = Executors.newFixedThreadPool(1);
+
+    private void executeRequest(Runnable r) {
+        LOG.info("Executing request "+r);
+        Future<?> submit = executor.submit(r);
+        LOG.info("Execution state = " + submit.state());
+    }
 }
