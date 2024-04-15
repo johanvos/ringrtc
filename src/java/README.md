@@ -12,3 +12,13 @@ itself is in TringServiceImpl, and it is made available via module-info.java
 Rust component:
 java.rs contains the implementation of methods invoked by TringServiceImpl.
 It is similar to electron.js
+
+BUILDING:
+Check out the webrtc sources and build them. This can be done using the electron target:
+
+make electron platform=UNIX
+
+This will checkout and compile webrtc, and it will build rust code. Next, build the Java
+artifacts:
+
+make java

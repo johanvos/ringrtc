@@ -17,8 +17,7 @@ use std::time::Duration;
 
 use libc::size_t;
 
-use crate::common::{CallId, CallMediaType, DeviceId, Result};
-use crate::core::bandwidth_mode::BandwidthMode;
+use crate::common::{CallConfig, CallId, CallMediaType, DataMode, DeviceId, Result};
 use crate::core::call_manager::CallManager;
 use crate::core::group_call;
 use crate::core::group_call::{GroupId, SignalingMessageUrgency};
@@ -283,6 +282,10 @@ pub enum Event {
         peer_id: PeerId,
         captured_level: AudioLevel,
         received_level: AudioLevel,
+    },
+    LowBandwidthForVideo {
+        peer_id: PeerId, 
+        recovered: bool,
     },
 }
 
@@ -638,7 +641,7 @@ impl EventReporter {
                         },
                     };
                     let jni_max_devices = 50 as jlong;
-                    let jni_device_count = peek_info.device_count as jlong;
+                    let jni_device_count = peek_info.device_count_including_pending_devices() as jlong;
                     let original_object = target_object.as_ref().clone().unwrap().as_obj();
                     let args = [
                         JValue::Object(&jni_joined_members).as_jni(),
@@ -715,7 +718,7 @@ impl EventReporter {
                         },
                     };
                     let jni_max_devices = 50 as jlong;
-                    let jni_device_count = peek_info.device_count as jlong;
+                    let jni_device_count = peek_info.device_count_including_pending_devices() as jlong;
                     let original_object = target_object.as_ref().clone().unwrap().as_obj();
                     let args = [
                         JValue::Object(&jni_joined_members).as_jni(),
@@ -876,6 +879,19 @@ impl CallStateHandler for EventReporter {
         })?;
         Ok(())
     }
+
+    fn handle_low_bandwidth_for_video(
+        &self,
+        remote_peer_id: &str,
+        recovered: bool,
+    ) -> Result<()> {
+        self.send(Event::LowBandwidthForVideo {
+            peer_id: remote_peer_id.to_string(),
+            recovered,
+        })?;
+        Ok(())
+    }
+
 }
 
 impl http::Delegate for EventReporter {
@@ -924,10 +940,7 @@ impl CallEndpoint {
     ) -> Result<Self> {
         // Relevant for both group calls and 1:1 calls
         let (events_sender, _events_receiver) = channel::<Event>();
-        let peer_connection_factory = PeerConnectionFactory::new(pcf::Config {
-            use_new_audio_device_module,
-            ..Default::default()
-        })?;
+        let peer_connection_factory = PeerConnectionFactory::new(&pcf::AudioConfig::default(), false)?;
         let outgoing_audio_track = peer_connection_factory.create_outgoing_audio_track()?;
         outgoing_audio_track.set_enabled(false);
         let outgoing_video_source = peer_connection_factory.create_outgoing_video_source()?;
@@ -1205,25 +1218,28 @@ pub unsafe extern "C" fn createOutgoingCall(
 pub unsafe extern "C" fn proceedCall(
     endpoint: i64,
     call_id: u64,
-    bandwidth_mode: i32,
+    data_mode: i32,
     audio_levels_interval_millis: i32,
     ice_user: JPString,
     ice_pwd: JPString,
+    ice_hostname: JPString,
     icepack: JByteArray2D,
 ) -> i64 {
     info!("Proceeding with call");
     let endpoint = ptr_as_mut(endpoint as *mut CallEndpoint).unwrap();
     let call_id = CallId::from(call_id);
     let mut ice_candidates = Vec::new();
+    let mut ice_servers = Vec::new();
     for j in 0..icepack.len {
         let row = &icepack.buff[j];
         let opaque = row.to_vec_u8();
         ice_candidates.push(String::from_utf8(opaque).unwrap());
     }
-    let ice_server = IceServer::new(ice_user.to_string(), ice_pwd.to_string(), ice_candidates);
+    let ice_server = IceServer::new(ice_user.to_string(), ice_pwd.to_string(), ice_hostname.to_string(), ice_candidates);
+    ice_servers.push(ice_server);
     let context = NativeCallContext::new(
         false,
-        ice_server,
+        ice_servers,
         endpoint.outgoing_audio_track.clone(),
         endpoint.outgoing_video_track.clone(),
         endpoint.incoming_video_sink.clone(),
@@ -1236,7 +1252,7 @@ pub unsafe extern "C" fn proceedCall(
     endpoint.call_manager.proceed(
         call_id,
         context,
-        BandwidthMode::from_i32(bandwidth_mode),
+        CallConfig::default().with_data_mode(DataMode::from_i32(data_mode)),
         audio_levels_interval,
     );
 
@@ -1630,16 +1646,16 @@ pub unsafe extern "C" fn setGroupMembers(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn setBandwidthMode(
+pub unsafe extern "C" fn setDataMode(
     endpoint: i64,
     client_id: u32,
-    bandwidth_mode: BandwidthMode,
+    data_mode: i32,
 ) -> i64 {
     info!("need to set_bandwidth_mode");
     let callendpoint = ptr_as_mut(endpoint as *mut CallEndpoint).unwrap();
     callendpoint
         .call_manager
-        .set_bandwidth_mode(client_id, bandwidth_mode);
+        .set_data_mode(client_id, DataMode::from_i32(data_mode));
     1
 }
 

@@ -73,7 +73,7 @@ zkgroup = { git = "https://github.com/signalapp/libsignal", tag = "v0.37.0" }
 #thiserror         = { version = "1.0.20" }
 #tokio             = { version = "1.13.0", features = ["rt-multi-thread", "time"] }
 #x25519-dalek      = { version = "1.1"    }
-#env_logger        = { version = "0.8.1" }
+env_logger        = { version = "0.8.1" }
 #jni = { version = "0.21.0", default-features = false, optional = true }
 #>>>>>>> javabuild
 
@@ -116,7 +116,7 @@ simnet = ["injectable_network"]
 injectable_network = []
 http = ["ureq", "rustls"]
 #=======
-#java = ["native", "jni"]
+java = ["native", "jni"]
 #native = []  # We have this so we can more easily disable things only native clients need
 #simnet = []  # We have this so we can more easily disable things only simulated native client need
 #http = ["ureq", "rustls", "webpki"]
@@ -142,8 +142,6 @@ jni = { version = "0.21.1", default-features = false }
 prost-build = { version = "0.12.3" }
 tonic-build = { version = "0.11.0" }
 #=======
-
-[build-dependencies]
 cbindgen = "0.20.0"
 #prost-build = { version = "0.11" }
 #>>>>>>> javabuild

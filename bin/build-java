@@ -112,6 +112,7 @@ export MACOSX_DEPLOYMENT_TARGET="10.10"
 
 # Build WebRTC.
 (
+    echo "Build WebRTC..."
     cd src/webrtc/src
     WEBRTC_ARGS="target_cpu=\"${GN_ARCH}\" rtc_build_examples=false rtc_build_tools=false rtc_include_tests=false rtc_enable_protobuf=false rtc_use_x11=false rtc_enable_sctp=false rtc_libvpx_build_vp9=true rtc_include_ilbc=false"
 
@@ -123,18 +124,21 @@ export MACOSX_DEPLOYMENT_TARGET="10.10"
         gn gen -C "${OUTPUT_DIR}"/release "--args=${WEBRTC_ARGS} is_debug=false"
         ninja -C "${OUTPUT_DIR}"/release
     fi
+    echo "Build WebRTC done"
 )
 
 # Build and link the final RingRTC library.
 (
     cd src/rust
 
+    echo "Build final RingRTC"
     if [ "${BUILD_TYPE}" = "debug" ]
     then
         RUSTFLAGS="${RUSTFLAGS_WIN}" OUTPUT_DIR="${OUTPUT_DIR}" cargo build --target ${CARGO_TARGET} --features java
     else
         OUTPUT_DIR="${OUTPUT_DIR}" cargo build --target ${CARGO_TARGET} --lib --features java --release
     fi
+    echo "Build final RingRTC done"
 
     mkdir -p ../java/tring/src/main/resources
     if [ $DEFAULT_PLATFORM = "darwin" ]
