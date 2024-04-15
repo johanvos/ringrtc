@@ -2136,6 +2136,7 @@ where
         _video_frame_metadata: VideoFrameMetadata,
         video_frame: Option<VideoFrame>,
     ) -> Result<()> {
+        info!("Hello, incoming video frame");
         if let (Some(incoming_video_sink), Some(video_frame)) =
             (self.incoming_video_sink.as_ref(), video_frame)
         {
