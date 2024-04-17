@@ -90,7 +90,7 @@ jobs:
     - name: Build
       run: |
         export PATH=$GITHUB_WORKSPACE/depot_tools/:$PATH
-        make java --ringrtc-only PLATFORM=${{ env.PLATFORM }} JEXTRACT=$GITHUB_WORKSPACE/jextract-22 JDK=$JAVA_HOME TARGET_ARCH=${{ env.ARCH }} MACOS_SDK_VERSION=12.1
+        make java PLATFORM=${{ env.PLATFORM }} JEXTRACT=$GITHUB_WORKSPACE/jextract-22 JDK=$JAVA_HOME TARGET_ARCH=${{ env.ARCH }} MACOS_SDK_VERSION=12.1
     - name: Deploy snapshot
       run: |
         cd src/java/tring
