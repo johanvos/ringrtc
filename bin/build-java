@@ -48,6 +48,15 @@ while [ "$1" != "" ]; do
         -r | --release )
             BUILD_TYPE=release
             ;;
+        --webrtc-only )
+            BUILD_WHAT=webrtc
+            ;;
+        --ringrtc-only )
+            BUILD_WHAT=ringrtc
+            ;;
+        --archive-webrtc )
+            ARCHIVE_WEBRTC=yes
+            ;;
         -c | --clean )
             clean
             exit
@@ -108,11 +117,22 @@ esac
 
 echo "Building for platform ${DEFAULT_PLATFORM}, TARGET_ARCH=${TARGET_ARCH}, GN_ARCH=${GN_ARCH}, CARGO_TARGET=${CARGO_TARGET}", OUTPUT_DIR=${OUTPUT_DIR}
 
-export MACOSX_DEPLOYMENT_TARGET="10.10"
+export MACOSX_DEPLOYMENT_TARGET="10.13"
 
 # Build WebRTC.
+if [ "${BUILD_WHAT}" = "all" ] || [ "${BUILD_WHAT}" = "webrtc" ]
+then
+    echo "Building WebRTC for ${GN_ARCH}"
+
+    WEBRTC_ARGS="target_cpu=\"${GN_ARCH}\" rtc_build_examples=false rtc_build_tools=false rtc_include_tests=false rtc_enable_protobuf=false rtc_use_x11=false rtc_enable_sctp=false rtc_libvpx_build_vp9=true rtc_include_ilbc=false rtc_disable_metrics=true rtc_disable_trace_events=true"
+
+    if [ "${BUILD_TYPE}" = "release" ]
+    then
+        WEBRTC_ARGS="${WEBRTC_ARGS} is_debug=false symbol_level=1"
+    fi
+
+
 (
-    echo "Build WebRTC..."
     cd src/webrtc/src
     WEBRTC_ARGS="target_cpu=\"${GN_ARCH}\" rtc_build_examples=false rtc_build_tools=false rtc_include_tests=false rtc_enable_protobuf=false rtc_use_x11=false rtc_enable_sctp=false rtc_libvpx_build_vp9=true rtc_include_ilbc=false"
 
@@ -123,9 +143,20 @@ export MACOSX_DEPLOYMENT_TARGET="10.10"
     else
         gn gen -C "${OUTPUT_DIR}"/release "--args=${WEBRTC_ARGS} is_debug=false"
         ninja -C "${OUTPUT_DIR}"/release
+        tools_webrtc/libs/generate_licenses.py --target :webrtc "${OUTPUT_DIR}/${BUILD_TYPE}" "${OUTPUT_DIR}/${BUILD_TYPE}"
     fi
+    if [ -n "${ARCHIVE_WEBRTC}" ]
+    then
+        STATIC_LIB_PATH="${BUILD_TYPE}"/obj/webrtc.lib
+        if [ ! -e "${OUTPUT_DIR}/${STATIC_LIB_PATH}" ]; then
+            STATIC_LIB_PATH="${BUILD_TYPE}"/obj/libwebrtc.a
+        fi
+        tar -c --auto-compress --dereference -f "${OUTPUT_DIR}"/webrtc-"${WEBRTC_VERSION}"-"${HOST_PLATFORM}"-"${TARGET_ARCH}"-${BUILD_TYPE}.tar.bz2 -C "${OUTPUT_DIR}" "${STATIC_LIB_PATH}" "${BUILD_TYPE}/LICENSE.md"
+    fi
+
     echo "Build WebRTC done"
 )
+fi
 
 # Build and link the final RingRTC library.
 (

@@ -94,7 +94,7 @@ java:
 		./bin/prepare-workspace $(PLATFORM) ; \
 	fi
 	echo "java: Release build" ; \
-	./bin/build-java -r
+	./bin/build-java -r --ringrtc-only
 
 cli:
 	$(Q) if [ "$(PLATFORM)" != "" ] ; then \

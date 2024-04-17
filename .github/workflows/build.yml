@@ -7,7 +7,7 @@ jobs:
   build:
     strategy:
       matrix:
-        os: [ ubuntu-latest, macos-latest ]
+        os: [ ubuntu-20.04, macos-latest ]
     runs-on: ${{ matrix.os }}
     steps:
     - uses: actions/checkout@v2
@@ -72,6 +72,8 @@ jobs:
         git clone https://chromium.googlesource.com/chromium/tools/depot_tools.git
     - name: Install rustup
       run: curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+    - name: Fetch webrtc
+      run: ./bin/fetch-artifact --platform {{ env.OS }}-{{ env.ARCH }} --release
     - name: Download and extract JEXTRACT
       run: |
         download_url="https://download.java.net/java/early_access/jextract/22/3/openjdk-22-jextract+3-13_${{ env.OS }}-${{ env.ARCH }}_bin.tar.gz"
@@ -80,7 +82,7 @@ jobs:
     - name: Build
       run: |
         export PATH=$GITHUB_WORKSPACE/depot_tools/:$PATH
-        make java PLATFORM=${{ env.PLATFORM }} JEXTRACT=$GITHUB_WORKSPACE/jextract-19 JDK=$JAVA_HOME TARGET_ARCH=${{ env.ARCH }} MACOS_SDK_VERSION=12.1
+        make java --ringrtc-only PLATFORM=${{ env.PLATFORM }} JEXTRACT=$GITHUB_WORKSPACE/jextract-22 JDK=$JAVA_HOME TARGET_ARCH=${{ env.ARCH }} MACOS_SDK_VERSION=12.1
     - name: Deploy snapshot
       run: |
         cd src/java/tring
