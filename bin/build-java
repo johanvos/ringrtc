@@ -168,7 +168,7 @@ fi
         RUSTFLAGS="${RUSTFLAGS_WIN}" OUTPUT_DIR="${OUTPUT_DIR}" cargo build --target ${CARGO_TARGET} --features java
     else
         #OUTPUT_DIR="${OUTPUT_DIR}" cargo build --target ${CARGO_TARGET} --lib --features java --release
-        OUTPUT_DIR="${OUTPUT_DIR}" cargo rustc --package ringrtc --target ${CARGO_TARGET} --features java ${INCLUDE_RELEASE_FLAG:+"--release"} --crate-type cdylib
+        OUTPUT_DIR="${OUTPUT_DIR}" cargo rustc --package ringrtc --target ${CARGO_TARGET} --features java --release --crate-type cdylib
     fi
     echo "Build final RingRTC done"
 
