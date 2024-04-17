@@ -119,6 +119,7 @@ def download_if_needed(archive_file: str, url: str, checksum: str, archive_dir: 
 
 
 def main() -> None:
+    print("Main entry in python webrtc fetcher")
     parser = build_argument_parser()
     args = parser.parse_args()
     os.makedirs(os.path.abspath(args.output_dir), exist_ok=True)

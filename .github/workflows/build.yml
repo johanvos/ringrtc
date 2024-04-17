@@ -92,8 +92,9 @@ jobs:
     - name: Fetch webrtc (windows)
       if: runner.os == 'Windows'
       run: |
+        echo "fetch webrtc"
         ./bin/fetch-artifact --platform windows-x64 --release
-        ./bin/fetch-artifact --platform windows-arm64 --release -o out-arm
+        echo "fetch webrtc done"
     - name: Download and extract JEXTRACT (default)
       if: runner.os != 'Windows'
       run: |
