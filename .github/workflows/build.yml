@@ -73,7 +73,14 @@ jobs:
     - name: Install rustup
       run: curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
     - name: Fetch webrtc
-      run: ./bin/fetch-artifact --platform ${{ env.OS }}-${{ env.ARCH }} --release
+      run: |
+        echo "filelist:"
+        ls ${{ github.workspace }}
+        echo "and in cwd:"
+        ls
+        echo "and pwd"
+        pwd
+        ./bin/fetch-artifact --platform ${{ env.OS }}-${{ env.ARCH }} --release
     - name: Download and extract JEXTRACT
       run: |
         download_url="https://download.java.net/java/early_access/jextract/22/3/openjdk-22-jextract+3-13_${{ env.OS }}-${{ env.ARCH }}_bin.tar.gz"
