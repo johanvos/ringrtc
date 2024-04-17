@@ -27,10 +27,12 @@ jobs:
         if [[ ${{ runner.os }} == "Linux" ]]
         then
           platform=unix
+          rtcplatform=linux
           classifier=linux-x86_64
         elif [[ ${{ runner.os }} == "macOS" ]]
         then
           platform=mac
+          rtcplatform=mac
           if [[ ${{ runner.arch }} == "X64" ]]
           then
             classifier=darwin-x86_64
@@ -40,9 +42,11 @@ jobs:
         elif [[ ${{ runner.os }} == "Windows" ]]
         then
           platform=windows
+          rtcplatform=windows
           classifier=win-x86_64
         fi
         echo "PLATFORM=$platform" >> $GITHUB_ENV
+        echo "RTCPLATFORM=$rtcplatform" >> $GITHUB_ENV
         echo "CLASSIFIER=$classifier" >> $GITHUB_ENV
       shell: bash
     - name: Download OpenJDK 22
@@ -67,6 +71,7 @@ jobs:
         echo ${{ env.OS }}
         echo ${{ env.ARCH }}
         echo ${{ env.PLATFORM }}
+        echo ${{ env.RTCPLATFORM }}
         echo ${{ env.CLASSIFIER }}
         cd $GITHUB_WORKSPACE
         git clone https://chromium.googlesource.com/chromium/tools/depot_tools.git
@@ -81,7 +86,7 @@ jobs:
         echo "and pwd"
         pwd
         echo "now fetch"
-        ./bin/fetch-artifact --platform ${{ env.PLATFORM }}-${{ env.ARCH }} --release
+        ./bin/fetch-artifact --platform ${{ env.RTCPLATFORM }}-${{ env.ARCH }} --release
     - name: Download and extract JEXTRACT
       run: |
         download_url="https://download.java.net/java/early_access/jextract/22/3/openjdk-22-jextract+3-13_${{ env.OS }}-${{ env.ARCH }}_bin.tar.gz"
