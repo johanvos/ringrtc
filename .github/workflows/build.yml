@@ -1,7 +1,7 @@
 name: Build and publish snapshots
 on:
   push:
-    branches: [ javabuild ]
+    branches: [ java21 ]
 
 jobs:
   build:
@@ -44,12 +44,12 @@ jobs:
         echo "PLATFORM=$platform" >> $GITHUB_ENV
         echo "CLASSIFIER=$classifier" >> $GITHUB_ENV
       shell: bash
-    - name: Download OpenJDK 19
+    - name: Download OpenJDK 22
       id: download
       uses: oracle-actions/setup-java@v1
       with:
         website: jdk.java.net
-        release: 19
+        release: 22
         install: false
     - name: Setup Java and Apache Maven
       uses: actions/setup-java@v3
@@ -73,7 +73,7 @@ jobs:
       run: curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
     - name: Download and extract JEXTRACT
       run: |
-        download_url="https://download.java.net/java/early_access/jextract/2/openjdk-19-jextract+2-3_${{ env.OS }}-${{ env.ARCH }}_bin.tar.gz"
+        download_url="https://download.java.net/java/early_access/jextract/22/3/openjdk-22-jextract+3-13_${{ env.OS }}-${{ env.ARCH }}_bin.tar.gz"
         wget -q --show-progress -O $RUNNER_TEMP/jextract.tar.gz $download_url
         tar -xvzf $RUNNER_TEMP/jextract.tar.gz -C $GITHUB_WORKSPACE
     - name: Build
