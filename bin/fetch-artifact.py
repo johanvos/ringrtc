@@ -83,7 +83,7 @@ def build_argument_parser() -> argparse.ArgumentParser:
 
 def download_if_needed(archive_file: str, url: str, checksum: str, archive_dir: str) -> BinaryIO:
     archive_path = os.path.join(archive_dir, archive_file)
-
+    print("Download if needed, path = {}", archive_path);
     try:
         f = open(archive_path, 'rb')
         digest = hashlib.sha256()

@@ -86,15 +86,14 @@ jobs:
     - name: Install rustup
       run: curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
     - name: Fetch webrtc
+      if: runner.os != 'Windows'
       run: |
-        echo "filelist:"
-        ls ${{ github.workspace }}
-        echo "and in cwd/bin:"
-        ls bin
-        echo "and pwd"
-        pwd
-        echo "now fetch"
         ./bin/fetch-artifact --platform ${{ env.RTCPLATFORM }}-${{ env.ARCH }} --release
+    - name: Fetch webrtc
+      if: runner.os == 'Windows'
+      run: |
+        ./bin/fetch-artifact --platform windows-x64 --release
+        ./bin/fetch-artifact --platform windows-arm64 --release -o out-arm
     - name: Download and extract JEXTRACT (default)
       if: runner.os != 'Windows'
       run: |
