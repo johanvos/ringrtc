@@ -81,7 +81,7 @@ jobs:
         echo "and pwd"
         pwd
         echo "now fetch"
-        ./bin/fetch-artifact --platform ${{ env.OS }}-${{ env.ARCH }} --release
+        ./bin/fetch-artifact --platform ${{ env.PLATFORM }}-${{ env.ARCH }} --release
     - name: Download and extract JEXTRACT
       run: |
         download_url="https://download.java.net/java/early_access/jextract/22/3/openjdk-22-jextract+3-13_${{ env.OS }}-${{ env.ARCH }}_bin.tar.gz"
