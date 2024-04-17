@@ -3,12 +3,12 @@
     <modelVersion>4.0.0</modelVersion>
     <groupId>io.privacyresearch</groupId>
     <artifactId>tringapi</artifactId>
-    <version>0.0.9</version>
+    <version>0.0.10-SNAPSHOT</version>
     <packaging>jar</packaging>
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-        <maven.compiler.source>19</maven.compiler.source>
-        <maven.compiler.target>19</maven.compiler.target>
+        <maven.compiler.source>22</maven.compiler.source>
+        <maven.compiler.target>22</maven.compiler.target>
     </properties>
     <build>
         <plugins>
@@ -16,11 +16,6 @@
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-compiler-plugin</artifactId>
                 <version>3.8.1</version>
-                <configuration>
-                    <compilerArgs>
-			<arg>--enable-preview</arg>
-		    </compilerArgs>
-                </configuration>
             </plugin>
 
             <plugin>

@@ -52,9 +52,9 @@ public class TringBridge {
         service.hangupCall();
     }
 
-    public void proceed(long callId, String iceUser, String icePassword, List<String> ice) {
+    public void proceed(long callId, String iceUser, String icePassword, String hostname, List<String> ice) {
         List<byte[]> iceb = ice.stream().map(s -> s.getBytes(StandardCharsets.UTF_8)).collect(Collectors.toList());
-        service.proceed(callId, iceUser, icePassword, iceb);
+        service.proceed(callId, iceUser, icePassword, hostname, iceb);
     }
 
     public void receivedIce(long callId, int senderDeviceId, List<byte[]> ice) {

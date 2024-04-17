@@ -18,7 +18,7 @@ public interface TringService {
     public void ignoreCall();
     public void hangupCall();
 
-    public void proceed(long callId, String iceUser, String icePwd, List<byte[]> ice);
+    public void proceed(long callId, String iceUser, String icePwd, String hostname, List<byte[]> ice);
 
     public void receivedIce(long callId, int senderDeviceId, List<byte[]> ice);
 
