@@ -76,10 +76,11 @@ jobs:
       run: |
         echo "filelist:"
         ls ${{ github.workspace }}
-        echo "and in cwd:"
-        ls
+        echo "and in cwd/bin:"
+        ls bin
         echo "and pwd"
         pwd
+        echo "now fetch"
         ./bin/fetch-artifact --platform ${{ env.OS }}-${{ env.ARCH }} --release
     - name: Download and extract JEXTRACT
       run: |
