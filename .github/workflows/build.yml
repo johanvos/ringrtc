@@ -45,7 +45,6 @@ jobs:
           rtcplatform=windows
           classifier=win-x86_64
         fi
-        echo "PLATFORM=$platform" >> $GITHUB_ENV
         echo "RTCPLATFORM=$rtcplatform" >> $GITHUB_ENV
         echo "CLASSIFIER=$classifier" >> $GITHUB_ENV
       shell: bash
@@ -70,7 +69,6 @@ jobs:
         echo "print env variables"
         echo ${{ env.OS }}
         echo ${{ env.ARCH }}
-        echo ${{ env.PLATFORM }}
         echo ${{ env.RTCPLATFORM }}
         echo ${{ env.CLASSIFIER }}
         cd $GITHUB_WORKSPACE
@@ -95,7 +93,7 @@ jobs:
     - name: Build
       run: |
         export PATH=$GITHUB_WORKSPACE/depot_tools/:$PATH
-        make java PLATFORM=${{ env.PLATFORM }} JEXTRACT=$GITHUB_WORKSPACE/jextract-22 JDK=$JAVA_HOME TARGET_ARCH=${{ env.ARCH }} MACOS_SDK_VERSION=12.1
+        make java JEXTRACT=$GITHUB_WORKSPACE/jextract-22 JDK=$JAVA_HOME TARGET_ARCH=${{ env.ARCH }} MACOS_SDK_VERSION=12.1
     - name: Deploy snapshot
       run: |
         cd src/java/tring
