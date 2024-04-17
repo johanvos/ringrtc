@@ -85,11 +85,11 @@ jobs:
         git clone https://chromium.googlesource.com/chromium/tools/depot_tools.git
     - name: Install rustup
       run: curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-    - name: Fetch webrtc
+    - name: Fetch webrtc (default)
       if: runner.os != 'Windows'
       run: |
         ./bin/fetch-artifact --platform ${{ env.RTCPLATFORM }}-${{ env.ARCH }} --release
-    - name: Fetch webrtc
+    - name: Fetch webrtc (windows)
       if: runner.os == 'Windows'
       run: |
         ./bin/fetch-artifact --platform windows-x64 --release
