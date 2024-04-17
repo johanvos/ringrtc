@@ -91,11 +91,20 @@ jobs:
         pwd
         echo "now fetch"
         ./bin/fetch-artifact --platform ${{ env.RTCPLATFORM }}-${{ env.ARCH }} --release
-    - name: Download and extract JEXTRACT
+    - name: Download and extract JEXTRACT (default)
+      if: runner.os != 'Windows'
       run: |
         download_url="https://download.java.net/java/early_access/jextract/22/3/openjdk-22-jextract+3-13_${{ env.OS }}-${{ env.AARCH }}_bin.tar.gz"
         wget -q --show-progress -O $RUNNER_TEMP/jextract.tar.gz $download_url
         tar -xvzf $RUNNER_TEMP/jextract.tar.gz -C $GITHUB_WORKSPACE
+    - name: Download and extract JEXTRACT (Windows)
+      if: runner.os != 'Windows'
+      run: |
+        $ProgressPreference = "SilentlyContinue"
+        Invoke-WebRequest https://download.java.net/java/early_access/jextract/22/3/openjdk-22-jextract+3-13_${{ env.OS }}-${{ env.ARCH }}_bin.tar.gz -OutFile jextract.tar.gz
+        tar -xvzf jextract.tar.gz -C $env:GITHUB_WORKSPACE
+        del jextract.tar.gz
+      shell: powershell
     - name: Build
       run: |
         export PATH=$GITHUB_WORKSPACE/depot_tools/:$PATH
