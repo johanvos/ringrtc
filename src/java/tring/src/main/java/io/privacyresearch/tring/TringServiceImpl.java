@@ -327,7 +327,6 @@ public class TringServiceImpl implements TringService {
 
     static MemorySegment toJString(Arena arena, String src) {
         MemorySegment answer = JPString.allocate(arena);
-        Thread.dumpStack();
         byte[] bytes = src.getBytes();
         JPString.len(answer, bytes.length);
         MemorySegment byteBuffer = MemorySegment.ofArray(bytes);
