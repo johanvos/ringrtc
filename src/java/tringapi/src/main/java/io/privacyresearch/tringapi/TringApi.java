@@ -28,4 +28,6 @@ public interface TringApi {
 
     public void sendOpaqueCallMessage(UUID recipient, byte[] opaque, int urgency);
 
+    public void updateRemoteDevices(List<Integer> demuxIds);
+
 }

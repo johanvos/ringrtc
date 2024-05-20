@@ -1990,7 +1990,7 @@ impl Client {
             self.client_id, requests, active_speaker_height,
         );
         self.actor.send(move |state| {
-            debug!(
+            info!(
                 "group_call::Client(inner)::request_video(client_id: {})",
                 state.client_id
             );

@@ -4,6 +4,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Optional;
 import java.util.ServiceLoader;
+import java.util.UUID;
 import java.util.logging.Logger;
 import java.util.stream.Collectors;
 
@@ -20,12 +21,13 @@ public class TringBridge {
     private TringService service;
     private static final Logger LOG = Logger.getLogger(TringBridge.class.getName());
 
-    public TringBridge(final TringApi api) {
+    public TringBridge(final TringApi api, final byte[] uuid) {
         ServiceLoader<TringService> loader = ServiceLoader.load(TringService.class);
         Optional<TringService> serviceOpt = loader.findFirst();
         serviceOpt.ifPresentOrElse(s -> {
             this.service = s;
             this.service.setApi(api);
+            this.service.setSelfUuid(uuid);
         }, () -> {
             LOG.warning("No tring service!");
         });
@@ -84,8 +86,8 @@ public class TringBridge {
         service.enableOutgoingVideo(enable);
     }
 
-    public TringFrame getRemoteVideoFrame() {
-        return service.getRemoteVideoFrame();
+    public TringFrame getRemoteVideoFrame(int demuxId) {
+        return service.getRemoteVideoFrame(demuxId);
     }  
 
     public void sendVideoFrame(int width, int height, int pixelFormat, byte[] raw) {

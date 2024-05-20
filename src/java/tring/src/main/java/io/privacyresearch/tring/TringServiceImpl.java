@@ -17,6 +17,7 @@ import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
+import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
@@ -74,7 +75,7 @@ public class TringServiceImpl implements TringService {
     public static long getNativeVersion() {
         return nativeVersion;
     }
-    
+
     @Override
     public void setApi(io.privacyresearch.tringapi.TringApi api) {
         this.api = api;
@@ -137,8 +138,9 @@ public class TringServiceImpl implements TringService {
                 toJByteArray(scope, opaque));
     }
 
-    public void setSelfUuid(String uuid) {
-        tringlib_h.setSelfUuid(callEndpoint, toJString(scope, uuid));
+    public void setSelfUuid(byte[] uuid) {
+        LOG.info("Pass our uuid to tring: "+uuid);
+        tringlib_h.setSelfUuid(callEndpoint, toJByteArray(scope, uuid));
     }
 
     @Override
@@ -250,11 +252,11 @@ public class TringServiceImpl implements TringService {
     }
 
     @Override
-    public TringFrame getRemoteVideoFrame(boolean skip) {
+    public TringFrame getRemoteVideoFrame(int demuxId, boolean skip) {
         int CAP = 5000000;
         try (Arena rscope = Arena.ofShared()) {
             MemorySegment segment = rscope.allocate(CAP);
-            long res = tringlib_h.fillRemoteVideoFrame(callEndpoint, segment, CAP);
+            long res = tringlib_h.fillRemoteVideoFrame(callEndpoint, demuxId, segment, CAP);
             if (res != 0) {
                 int w = (int) (res >> 16);
                 int h = (int) (res % (1 <<16));
@@ -272,7 +274,12 @@ public class TringServiceImpl implements TringService {
 
     @Override
     public void enableOutgoingVideo(boolean enable) {
-        tringlib_h.setOutgoingVideoEnabled(callEndpoint, enable);
+        LOG.info("Toggle own video to "+enable+", for clientid = "+this.clientId);
+        if (this.clientId < 0) {
+            tringlib_h.setOutgoingVideoEnabled(callEndpoint, enable);
+        } else {
+            tringlib_h.setOutgoingVideoMuted(callEndpoint, clientId, !enable);
+        }
     }
 
     @Override
@@ -304,7 +311,6 @@ public class TringServiceImpl implements TringService {
     }
 
     static MemorySegment toJByteArray(Arena arena, byte[] raw) {
-        LOG.info("Create JB with "+raw.length+" bytes");
         MemorySegment answer = JByteArray.allocate(arena);
         int size = raw.length;
         MemorySegment rawSegment = MemorySegment.ofArray(raw);
@@ -312,7 +318,6 @@ public class TringServiceImpl implements TringService {
         transfer.copyFrom(rawSegment);
         JByteArray.len(answer, size);
         JByteArray.buff(answer, transfer);
-        LOG.info("Size of JB = "+answer.byteSize());
         return answer;
     }
     
@@ -369,13 +374,16 @@ public class TringServiceImpl implements TringService {
 
     public void handleRemoteDevicesChanged(List devices) {
         LOG.info("Devices changed into "+devices);
+        List<Integer> demuxIds = new LinkedList<>();
         for (Object entry : devices) {
             ByteBuffer bb = ByteBuffer.wrap((byte[]) entry);
             int demuxId = bb.getInt();
+            demuxIds.add(demuxId);
             LOG.info("Schedule call to request video from "+demuxId);
             Runnable r = () -> requestVideo(callEndpoint, clientId, demuxId);
             executeRequest(r);
         }
+        api.updateRemoteDevices(demuxIds);
     }
 
     public void makeHttpRequest(String uri, byte m, int reqid, byte[] headers, byte[] body) {
