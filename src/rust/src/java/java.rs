@@ -1015,7 +1015,7 @@ struct LastFramesVideoSink {
 
 impl VideoSink for LastFramesVideoSink {
     fn on_video_frame(&self, track_id: u32, frame: VideoFrame) {
-        info!("Got videoframe!");
+        info!("Got videoframe for track_id {}", track_id);
         // let myframe: &mut[u8;512] = &mut [0;512];
         // frame.to_rgba(myframe.as_mut_slice());
         // info!("uploading frame = {:?}", myframe);
@@ -1095,10 +1095,10 @@ pub unsafe extern "C" fn createCallEndpoint(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn setSelfUuid(endpoint: i64, ts: JPString) -> i64 {
-    let txt = ts.to_string();
-    info!("setSelfUuid to : {}", txt);
-    let uuid = txt.into_bytes();
+// pub unsafe extern "C" fn setSelfUuid(endpoint: i64, ts: JPString) -> i64 {
+pub unsafe extern "C" fn setSelfUuid(endpoint: i64, me: JByteArray) -> i64 {
+    let uuid = me.to_vec_u8();
+    debug!("setSelfUuid to {:?}", uuid);
     let callendpoint = ptr_as_mut(endpoint as *mut CallEndpoint).unwrap();
     callendpoint.call_manager.set_self_uuid(uuid);
     1
@@ -1448,10 +1448,10 @@ pub unsafe extern "C" fn fillLargeArray(endpoint: i64, mybuffer: *mut u8) -> i64
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn fillRemoteVideoFrame(endpoint: i64, mybuffer: *mut u8, len: usize) -> i64 {
-    info!("Have to retrieve remote video frame");
+pub unsafe extern "C" fn fillRemoteVideoFrame(endpoint: i64, demuxId: u32, mybuffer: *mut u8, len: usize) -> i64 {
+    info!("Have to retrieve remote video frame, trackId = {}", demuxId);
     let endpoint = ptr_as_mut(endpoint as *mut CallEndpoint).unwrap();
-    let frame = endpoint.incoming_video_sink.pop(0);
+    let frame = endpoint.incoming_video_sink.pop(demuxId);
     if let Some(frame) = frame {
         let frame = frame.apply_rotation();
         let width: u32 = frame.width();
@@ -1494,7 +1494,7 @@ fn deserialize_to_group_member_info(
     Ok(group_members)
 }
 
-// Group Calls
+// Group Calls GROUP CALLS start here
 
 #[no_mangle]
 pub unsafe extern "C" fn peekGroupCall(endpoint: i64, mp: JByteArray, gm: JByteArray) -> i64 {
@@ -1698,6 +1698,6 @@ pub unsafe extern "C" fn requestVideo(endpoint: i64, client_id: u32, demux_id: u
 
     callendpoint
         .call_manager
-        .request_video(client_id, rendered_resolutions, 1);
+        .request_video(client_id, rendered_resolutions, 150);
     1
 }

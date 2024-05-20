@@ -1,6 +1,7 @@
  package io.privacyresearch.tringapi;
 
 import java.util.List;
+import java.util.UUID;
 
  /**
   * Implementations of this interface provides the access points for the application to interact with
@@ -13,6 +14,7 @@ import java.util.List;
 public interface TringService {
 
     public void setApi(TringApi api);
+    public void setSelfUuid(byte[] aci);
 
     public void acceptCall();
     public void ignoreCall();
@@ -47,10 +49,10 @@ public interface TringService {
      * @param skip if true, ignore all old frames, and return the most recent one
      * @return a frame
      */
-    public TringFrame getRemoteVideoFrame(boolean skip);
+    public TringFrame getRemoteVideoFrame(int demuxId, boolean skip);
 
-    public default TringFrame getRemoteVideoFrame() {
-        return getRemoteVideoFrame(false);
+    public default TringFrame getRemoteVideoFrame(int demuxId) {
+        return getRemoteVideoFrame(demuxId, false);
     }
     public void sendVideoFrame(int w, int h, int pixelFormat, byte[] raw);
 
