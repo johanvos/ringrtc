@@ -1,0 +1,141 @@
+name: Release Java
+on:
+  push:
+    tags:
+      - 'tring*'
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        os: [ ubuntu-20.04, macos-latest, macos-13, windows-latest ]
+    runs-on: ${{ matrix.os }}
+    steps:
+    - uses: actions/checkout@v2
+      with:
+        ref: main
+    - name: Install latest bash on macOS
+      if: runner.os == 'macOS'
+      run: |
+        brew update
+        brew install bash
+        brew install coreutils
+        brew install protobuf
+        pip install setuptools
+    - name: linux install stuff
+      if: runner.os == 'Linux'
+      run: sudo apt-get update && sudo apt-get install -y protobuf-compiler crossbuild-essential-arm64
+    - name: windows install stuff
+      if: runner.os == 'Windows'
+      run: choco install protoc
+      shell: cmd
+    - name: Set environment variables
+      run: |
+        echo "OS=${RUNNER_OS,,}" >> $GITHUB_ENV
+        echo "ARCH=${RUNNER_ARCH,,}" >> $GITHUB_ENV
+        echo "AARCH=${RUNNER_ARCH,,}" >> $GITHUB_ENV
+        if [[ ${{ runner.os }} == "Linux" ]]
+        then
+          platform=unix
+          rtcplatform=linux
+          classifier=linux-x86_64
+        elif [[ ${{ runner.os }} == "macOS" ]]
+        then
+          platform=mac
+          rtcplatform=mac
+          if [[ ${{ runner.arch }} == "X64" ]]
+          then
+            classifier=darwin-x86_64
+          else
+            classifier=darwin-aarch64
+            echo "AARCH=aarch64" >> $GITHUB_ENV
+          fi
+        elif [[ ${{ runner.os }} == "Windows" ]]
+        then
+          platform=windows
+          rtcplatform=windows
+          classifier=windows-x86_64
+        fi
+        echo "RTCPLATFORM=$rtcplatform" >> $GITHUB_ENV
+        echo "CLASSIFIER=$classifier" >> $GITHUB_ENV
+      shell: bash
+    - name: Download OpenJDK 22
+      id: download
+      uses: oracle-actions/setup-java@v1
+      with:
+        website: jdk.java.net
+        release: 22
+        install: false
+    - name: Setup Java and Apache Maven
+      uses: actions/setup-java@v3
+      with:
+        distribution: jdkfile
+        jdkFile: ${{ steps.download.outputs.archive }}
+        java-version: ${{ steps.download.outputs.version }}
+        server-id: gluon-nexus
+        server-username: MAVEN_USERNAME
+        server-password: MAVEN_CENTRAL_TOKEN
+    - name: Checkout tools repo
+      run: |
+        echo "print env variables"
+        echo ${{ env.OS }}
+        echo ${{ env.ARCH }}
+        echo ${{ env.RTCPLATFORM }}
+        echo ${{ env.CLASSIFIER }}
+        cd $GITHUB_WORKSPACE
+        git clone https://chromium.googlesource.com/chromium/tools/depot_tools.git
+    - name: Install rustup
+      run: curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+    - name: Fetch webrtc (default)
+      if: runner.os != 'Windows'
+      run: |
+        ./bin/fetch-artifact --platform ${{ env.RTCPLATFORM }}-${{ env.ARCH }} --release
+    - name: Fetch webrtc (windows)
+      if: runner.os == 'Windows'
+      run: |
+        echo "fetch webrtcv2"
+        sh ./bin/fetch-artifact --platform windows-x64 --release
+        echo "fetch webrtc done"
+    - name: Download and extract JEXTRACT (default)
+      if: runner.os != 'Windows'
+      run: |
+        download_url="https://download.java.net/java/early_access/jextract/22/3/openjdk-22-jextract+3-13_${{ env.OS }}-${{ env.AARCH }}_bin.tar.gz"
+        wget -q --show-progress -O $RUNNER_TEMP/jextract.tar.gz $download_url
+        tar -xvzf $RUNNER_TEMP/jextract.tar.gz -C $GITHUB_WORKSPACE
+    - name: Download and extract JEXTRACT (Windows)
+      if: runner.os == 'Windows'
+      run: |
+        $ProgressPreference = "SilentlyContinue"
+        Invoke-WebRequest https://download.java.net/java/early_access/jextract/22/3/openjdk-22-jextract+3-13_${{ env.OS }}-${{ env.ARCH }}_bin.tar.gz -OutFile jextract.tar.gz
+        tar -xvzf jextract.tar.gz -C $env:GITHUB_WORKSPACE
+        del jextract.tar.gz
+      shell: powershell
+    - name: Build (default)
+      if: runner.os != 'Windows'
+      run: |
+        export PATH=$GITHUB_WORKSPACE/depot_tools/:$PATH
+        make java JEXTRACT=$GITHUB_WORKSPACE/jextract-22 JDK=$JAVA_HOME TARGET_ARCH=${{ env.ARCH }} MACOS_SDK_VERSION=12.1
+    - name: Build (Windows)
+      if: runner.os == 'Windows'
+      run: |
+        $env:DEPOT_TOOLS_WIN_TOOLCHAIN = 0
+        $env:PATH = $env:GITHUB_WORKSPACE + "\depot_tools\;" + $env:GITHUB_WORKSPACE + "\make\bin\;" + $env:PATH
+        echo $env:PATH
+        make java PLATFORM=${{ env.PLATFORM }} JEXTRACT=$env:GITHUB_WORKSPACE\jextract-22 JDK=$env:JAVA_HOME TARGET_ARCH=${{ env.ARCH }}
+      shell: powershell
+    - name: Release Tring
+      if: ${{ startsWith(github.ref_name, 'tring-') }}
+      run: |
+        cd src/java/tring
+        mvn -Dclassifier=${{ env.CLASSIFIER }} deploy
+      env:
+        MAVEN_USERNAME: ${{ secrets.GLUON_NEXUS_USERNAME }}
+        MAVEN_CENTRAL_TOKEN: ${{ secrets.GLUON_NEXUS_PASSWORD }}
+    - name: Release Tring API
+      if: ${{ startsWith(github.ref_name, 'tringapi-') && runner.os == 'Linux' }}
+      run: |
+        cd src/java/tringapi
+        mvn deploy
+      env:
+        MAVEN_USERNAME: ${{ secrets.GLUON_NEXUS_USERNAME }}
+        MAVEN_CENTRAL_TOKEN: ${{ secrets.GLUON_NEXUS_PASSWORD }}
