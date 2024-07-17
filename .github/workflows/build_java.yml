@@ -125,7 +125,13 @@ jobs:
     - name: Deploy snapshot
       run: |
         cd src/java/tring
-        mvn -Dclassifier=${{ env.CLASSIFIER }} deploy
+        # Find version
+        ver=$(mvn help:evaluate -Dexpression=project.version -q -DforceStdout)
+        if [[ $ver == *"SNAPSHOT"* ]]
+        then
+            mvn -ntp -Dclassifier=${{ env.CLASSIFIER }} deploy
+        fi
+      shell: bash
       env:
         MAVEN_USERNAME: ${{ secrets.GLUON_NEXUS_USERNAME }}
         MAVEN_CENTRAL_TOKEN: ${{ secrets.GLUON_NEXUS_PASSWORD }}
