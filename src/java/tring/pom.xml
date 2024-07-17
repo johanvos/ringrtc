@@ -10,6 +10,12 @@
         <maven.compiler.source>22</maven.compiler.source>
         <maven.compiler.target>22</maven.compiler.target>
     </properties>
+    <repositories>
+        <repository>
+            <id>gluon-nexus</id>
+            <url>https://nexus.gluonhq.com/nexus/content/repositories/releases</url>
+        </repository>
+    </repositories>
     <dependencies>
         <dependency>
             <groupId>io.privacyresearch</groupId>
