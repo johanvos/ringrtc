@@ -16,7 +16,7 @@ It is similar to electron.js
 BUILDING:
 Check out the webrtc sources and build them. This can be done using the electron target:
 
-make electron platform=UNIX
+make electron PLATFORM=unix
 
 This will checkout and compile webrtc, and it will build rust code. Next, build the Java
 artifacts:
