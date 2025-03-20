@@ -38,7 +38,7 @@ use crate::webrtc::media::{
 };
 use crate::webrtc::peer_connection::AudioLevel;
 use crate::webrtc::peer_connection_factory::{
-    self as pcf, AudioDevice, IceServer, PeerConnectionFactory,
+    self as pcf, AudioDevice, IceServer, PeerConnectionFactory, RffiAudioDeviceModuleType,
 };
 use crate::webrtc::peer_connection_observer::NetworkRoute;
 use neon::types::buffer::TypedArray;
@@ -142,6 +142,9 @@ pub enum Event {
     // The call with the given remote PeerId has changed state.
     // We assume only one call per remote PeerId at a time.
     CallState(PeerId, CallId, CallState),
+    // The state of the remote audio (whether enabled or not) changed.
+    // Like call state, we ID the call by PeerId and assume there is only one.
+    RemoteAudioStateChange(PeerId, bool),
     // The state of the remote video (whether enabled or not) changed.
     // Like call state, we ID the call by PeerId and assume there is only one.
     RemoteVideoStateChange(PeerId, bool),
@@ -274,6 +277,13 @@ impl CallStateHandler for EventReporter {
         ))
     }
 
+    fn handle_remote_audio_state(&self, remote_peer_id: &str, enabled: bool) -> Result<()> {
+        self.send(Event::RemoteAudioStateChange(
+            remote_peer_id.to_string(),
+            enabled,
+        ))
+    }
+
     fn handle_remote_video_state(&self, remote_peer_id: &str, enabled: bool) -> Result<()> {
         self.send(Event::RemoteVideoStateChange(
             remote_peer_id.to_string(),
@@ -354,11 +364,18 @@ pub struct CallEndpoint {
 }
 
 impl CallEndpoint {
-    fn new<'a>(cx: &mut impl Context<'a>, js_object: Handle<'a, JsObject>) -> Result<Self> {
+    fn new<'a>(
+        cx: &mut impl Context<'a>,
+        js_object: Handle<'a, JsObject>,
+        use_ringrtc_adm: bool,
+    ) -> Result<Self> {
         // Relevant for both group calls and 1:1 calls
         let (events_sender, events_receiver) = channel::<Event>();
-        let peer_connection_factory =
-            PeerConnectionFactory::new(&pcf::AudioConfig::default(), false)?;
+        let mut audio_config = pcf::AudioConfig::default();
+        if use_ringrtc_adm {
+            audio_config.audio_device_module_type = RffiAudioDeviceModuleType::RingRtc;
+        }
+        let peer_connection_factory = PeerConnectionFactory::new(&audio_config, false)?;
         let outgoing_audio_track = peer_connection_factory.create_outgoing_audio_track()?;
         outgoing_audio_track.set_enabled(false);
         let outgoing_video_source = peer_connection_factory.create_outgoing_video_source()?;
@@ -420,6 +437,12 @@ impl CallEndpoint {
                 .lock()
                 .expect("lock event reporter for logging");
             *event_reporter_for_logging = Some(event_reporter.clone());
+        }
+
+        if use_ringrtc_adm {
+            // After initializing logs, log the backend in use.
+            let backend = peer_connection_factory.audio_backend();
+            info!("audio_device_module using cubeb backend {:?}", backend);
         }
 
         // Only relevant for 1:1 calls
@@ -541,6 +564,7 @@ fn to_js_peek_info<'a>(
         creator,
         era_id,
         max_devices,
+        call_link_state: _call_link_state,
     } = &peek_info;
 
     let js_devices = JsArray::new(cx, devices.len());
@@ -579,6 +603,7 @@ fn to_js_peek_info<'a>(
         let js_user_id = to_js_buffer(cx, user_id);
         js_pending_users.set(cx, i as u32, js_user_id)?;
     }
+    let js_call_link_state = to_js_call_link_state(cx, peek_info.call_link_state.as_ref())?;
 
     let js_info = cx.empty_object();
     js_info.set(cx, "devices", js_devices)?;
@@ -598,7 +623,41 @@ fn to_js_peek_info<'a>(
     // For backwards compatibility.
     js_info.set(cx, "deviceCount", device_count_including_pending_devices)?;
     js_info.set(cx, "pendingUsers", js_pending_users)?;
+    js_info.set(cx, "callLinkState", js_call_link_state)?;
     Ok(js_info)
+}
+
+fn to_js_call_link_state<'a>(
+    cx: &mut FunctionContext<'a>,
+    state: Option<&CallLinkState>,
+) -> JsResult<'a, JsValue> {
+    match state {
+        Some(state) => {
+            let state_object = cx.empty_object();
+            let js_name = cx.string(&state.name);
+            state_object.set(cx, "name", js_name)?;
+            let js_revoked = cx.boolean(state.revoked);
+            state_object.set(cx, "revoked", js_revoked)?;
+            let js_restrictions = cx.number(match state.restrictions {
+                CallLinkRestrictions::None => 0,
+                CallLinkRestrictions::AdminApproval => 1,
+                CallLinkRestrictions::Unknown => -1,
+            });
+            state_object.set(cx, "rawRestrictions", js_restrictions)?;
+            let js_expiration = cx
+                .date(
+                    state
+                        .expiration
+                        .duration_since(std::time::SystemTime::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_millis() as f64,
+                )
+                .or_else(|e| cx.throw_range_error(e.to_string()))?;
+            state_object.set(cx, "expiration", js_expiration)?;
+            Ok(state_object.upcast())
+        }
+        None => Ok(cx.undefined().upcast()),
+    }
 }
 
 static CALL_ENDPOINT_PROPERTY_KEY: &str = "__call_endpoint_addr";
@@ -623,6 +682,7 @@ impl Finalize for CallEndpoint {
 fn createCallEndpoint(mut cx: FunctionContext) -> JsResult<JsValue> {
     let js_call_manager = cx.argument::<JsObject>(0)?;
     let field_trial_string = cx.argument::<JsString>(1)?.value(&mut cx);
+    let use_ringrtc_adm = cx.argument::<JsBoolean>(2)?.value(&mut cx);
 
     if ENABLE_LOGGING {
         let is_first_time_initializing_logger = log::set_logger(&LOG).is_ok();
@@ -647,7 +707,7 @@ fn createCallEndpoint(mut cx: FunctionContext) -> JsResult<JsValue> {
     let _ = field_trial::init(&field_trial_string);
     info!("initialized field trials with {}", field_trial_string);
 
-    let endpoint = CallEndpoint::new(&mut cx, js_call_manager)
+    let endpoint = CallEndpoint::new(&mut cx, js_call_manager, use_ringrtc_adm)
         .or_else(|err: anyhow::Error| cx.throw_error(format!("{}", err)))?;
     Ok(cx.boxed(RefCell::new(endpoint)).upcast())
 }
@@ -917,8 +977,6 @@ fn receivedOffer(mut cx: FunctionContext) -> JsResult<JsValue> {
                 age: Duration::from_secs(age_sec),
                 sender_device_id,
                 receiver_device_id,
-                // An electron client cannot be the primary device.
-                receiver_device_is_primary: false,
                 sender_identity_key,
                 receiver_identity_key,
             },
@@ -1128,6 +1186,13 @@ fn setOutgoingAudioEnabled(mut cx: FunctionContext) -> JsResult<JsValue> {
 
     with_call_endpoint(&mut cx, |endpoint| {
         endpoint.outgoing_audio_track.set_enabled(enabled);
+        // The client may call this before the call has connected.
+        if let Ok(mut active_connection) = endpoint.call_manager.active_connection() {
+            active_connection.update_sender_status(signaling::SenderStatus {
+                audio_enabled: Some(enabled),
+                ..Default::default()
+            })?;
+        }
         Ok(())
     })
     .or_else(|err: anyhow::Error| cx.throw_error(format!("{}", err)))?;
@@ -1826,6 +1891,7 @@ fn peekCallLinkCall(mut cx: FunctionContext) -> JsResult<JsValue> {
             Some(hex::encode(root_key.derive_room_id())),
             call_links::auth_header_from_auth_credential(&auth_presentation),
             Arc::new(call_links::CallLinkMemberResolver::from(&root_key)),
+            Some(root_key.clone()),
             Box::new(move |peek_result| {
                 // Ignore errors, that can only mean we're shutting down.
                 let _ = event_reporter.send(Event::GroupUpdate(GroupUpdate::PeekResult {
@@ -1866,6 +1932,24 @@ fn readCallLink(mut cx: FunctionContext) -> JsResult<JsValue> {
     Ok(cx.undefined().upcast())
 }
 
+fn jsvalue_to_restrictions(
+    raw_restrictions: Handle<'_, JsValue>,
+    cx: &mut FunctionContext,
+) -> std::result::Result<Option<CallLinkRestrictions>, neon::result::Throw> {
+    if raw_restrictions.is_a::<JsUndefined, _>(cx) {
+        Ok(None)
+    } else {
+        let raw_restrictions = raw_restrictions
+            .downcast_or_throw::<JsNumber, _>(cx)?
+            .value(cx);
+        Ok(match raw_restrictions as i8 {
+            0 => Some(CallLinkRestrictions::None),
+            1 => Some(CallLinkRestrictions::AdminApproval),
+            _ => None,
+        })
+    }
+}
+
 #[allow(non_snake_case)]
 fn createCallLink(mut cx: FunctionContext) -> JsResult<JsValue> {
     let request_id = cx.argument::<JsNumber>(0)?.value(&mut cx) as u32;
@@ -1879,6 +1963,8 @@ fn createCallLink(mut cx: FunctionContext) -> JsResult<JsValue> {
     let admin_passkey = admin_passkey.as_slice(&cx).to_vec();
     let public_zkparams = cx.argument::<JsBuffer>(5)?;
     let public_zkparams = public_zkparams.as_slice(&cx).to_vec();
+    let restrictions = cx.argument::<JsValue>(6)?;
+    let restrictions = jsvalue_to_restrictions(restrictions, &mut cx)?;
 
     with_call_endpoint(&mut cx, |endpoint| {
         let event_reporter = endpoint.event_reporter.clone();
@@ -1889,6 +1975,7 @@ fn createCallLink(mut cx: FunctionContext) -> JsResult<JsValue> {
             &create_presentation,
             &admin_passkey,
             &public_zkparams,
+            restrictions,
             Box::new(move |result| {
                 // Ignore errors, that can only mean we're shutting down.
                 let _ = event_reporter.send(Event::CallLinkResponse { request_id, result });
@@ -1927,18 +2014,7 @@ fn updateCallLink(mut cx: FunctionContext) -> JsResult<JsValue> {
     };
 
     let new_restrictions = cx.argument::<JsValue>(6)?;
-    let new_restrictions = if new_restrictions.is_a::<JsUndefined, _>(&mut cx) {
-        None
-    } else {
-        let raw_restrictions = new_restrictions
-            .downcast_or_throw::<JsNumber, _>(&mut cx)?
-            .value(&mut cx);
-        match raw_restrictions as i8 {
-            0 => Some(CallLinkRestrictions::None),
-            1 => Some(CallLinkRestrictions::AdminApproval),
-            _ => None,
-        }
-    };
+    let new_restrictions = jsvalue_to_restrictions(new_restrictions, &mut cx)?;
 
     let new_revoked = cx.argument::<JsValue>(7)?;
     let new_revoked = if new_revoked.is_a::<JsUndefined, _>(&mut cx) {
@@ -2086,6 +2162,19 @@ fn setAudioOutput(mut cx: FunctionContext) -> JsResult<JsValue> {
         Ok(_) => (),
         Err(err) => error!("setAudioOutput failed: {}", err),
     };
+
+    Ok(cx.undefined().upcast())
+}
+
+#[allow(non_snake_case)]
+fn setRtcStatsInterval(mut cx: FunctionContext) -> JsResult<JsValue> {
+    let client_id = cx.argument::<JsNumber>(0)?.value(&mut cx) as group_call::ClientId;
+    let interval = Duration::from_millis(cx.argument::<JsNumber>(1)?.value(&mut cx) as u64);
+    with_call_endpoint(&mut cx, |endpoint| {
+        endpoint
+            .call_manager
+            .set_rtc_stats_interval(client_id, interval)
+    });
 
     Ok(cx.undefined().upcast())
 }
@@ -2293,6 +2382,13 @@ fn processEvents(mut cx: FunctionContext) -> JsResult<JsValue> {
                     cx.string(peer_id).upcast::<JsValue>(),
                     cx.number(network_route.local_adapter_type as i32).upcast(),
                 ];
+                let method = observer.get::<JsFunction, _, _>(&mut cx, method_name)?;
+                method.call(&mut cx, observer, args)?;
+            }
+
+            Event::RemoteAudioStateChange(peer_id, enabled) => {
+                let method_name = "onRemoteAudioEnabled";
+                let args = [cx.string(peer_id).upcast(), cx.boolean(enabled).upcast()];
                 let method = observer.get::<JsFunction, _, _>(&mut cx, method_name)?;
                 method.call(&mut cx, observer, args)?;
             }
@@ -2619,6 +2715,7 @@ fn processEvents(mut cx: FunctionContext) -> JsResult<JsValue> {
                 let js_info = to_js_peek_info(&mut cx, peek_info)?;
 
                 let args = [cx.number(client_id).upcast(), js_info.upcast()];
+
                 let method = observer.get::<JsFunction, _, _>(&mut cx, method_name)?;
                 method.call(&mut cx, observer, args)?;
             }
@@ -2744,6 +2841,22 @@ fn processEvents(mut cx: FunctionContext) -> JsResult<JsValue> {
                 let method_name = "handleRaisedHands";
                 let args = [cx.number(client_id).upcast(), js_raised_hands.upcast()];
 
+                let method = observer.get::<JsFunction, _, _>(&mut cx, method_name)?;
+                method.call(&mut cx, observer, args)?;
+            }
+
+            Event::GroupUpdate(GroupUpdate::RtcStatsReportComplete { report_json }) => {
+                let method_name = "handleRtcStatsReportComplete";
+                let args = [cx.string(report_json).upcast()];
+                let method = observer.get::<JsFunction, _, _>(&mut cx, method_name)?;
+                method.call(&mut cx, observer, args)?;
+            }
+            Event::GroupUpdate(GroupUpdate::SpeechEvent(client_id, event)) => {
+                let method_name = "handleSpeechEvent";
+                let args = [
+                    cx.number(client_id).upcast(),
+                    cx.number(event as i32).upcast(),
+                ];
                 let method = observer.get::<JsFunction, _, _>(&mut cx, method_name)?;
                 method.call(&mut cx, observer, args)?;
             }
@@ -2907,6 +3020,7 @@ fn register(mut cx: ModuleContext) -> NeonResult<()> {
     cx.export_function("cm_setAudioInput", setAudioInput)?;
     cx.export_function("cm_getAudioOutputs", getAudioOutputs)?;
     cx.export_function("cm_setAudioOutput", setAudioOutput)?;
+    cx.export_function("cm_setRtcStatsInterval", setRtcStatsInterval)?;
     cx.export_function("cm_processEvents", processEvents)?;
     Ok(())
 }

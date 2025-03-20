@@ -253,6 +253,12 @@ pub trait Platform: sfu::Delegate + fmt::Debug + fmt::Display + Send + Sized + '
         joined_members: &HashSet<UserId>,
     );
 
+    fn handle_speaking_notification(
+        &self,
+        client_id: group_call::ClientId,
+        event: group_call::SpeechEvent,
+    );
+
     fn handle_audio_levels(
         &self,
         _client_id: group_call::ClientId,
@@ -266,6 +272,8 @@ pub trait Platform: sfu::Delegate + fmt::Debug + fmt::Display + Send + Sized + '
     fn handle_reactions(&self, client_id: group_call::ClientId, reactions: Vec<Reaction>);
 
     fn handle_raised_hands(&self, client_id: group_call::ClientId, raised_hands: Vec<DemuxId>);
+
+    fn handle_rtc_stats_report(&self, _report_json: String) {}
 
     fn handle_ended(&self, client_id: group_call::ClientId, reason: group_call::EndReason);
 }

@@ -288,7 +288,6 @@ pub fn received_offer(
     age_sec: u64,
     call_media_type: CallMediaType,
     receiver_device_id: DeviceId,
-    receiver_device_is_primary: bool,
     sender_identity_key: JByteArray,
     receiver_identity_key: JByteArray,
 ) -> Result<()> {
@@ -316,7 +315,6 @@ pub fn received_offer(
             age: Duration::from_secs(age_sec),
             sender_device_id,
             receiver_device_id,
-            receiver_device_is_primary,
             sender_identity_key,
             receiver_identity_key,
         },
@@ -478,6 +476,20 @@ pub fn get_active_call_context(call_manager: *mut AndroidCallManager) -> Result<
     Ok(android_call_context.to_jni())
 }
 
+/// CMI request to set the audio status
+pub fn set_audio_enable(call_manager: *mut AndroidCallManager, enable: bool) -> Result<()> {
+    let call_manager = unsafe { ptr_as_mut(call_manager)? };
+
+    if let Ok(mut active_connection) = call_manager.active_connection() {
+        active_connection.update_sender_status(signaling::SenderStatus {
+            audio_enabled: Some(enable),
+            ..Default::default()
+        })
+    } else {
+        Ok(())
+    }
+}
+
 /// CMI request to set the video status
 pub fn set_video_enable(call_manager: *mut AndroidCallManager, enable: bool) -> Result<()> {
     let call_manager = unsafe { ptr_as_mut(call_manager)? };
@@ -561,6 +573,7 @@ pub fn create_call_link(
     root_key: JByteArray,
     admin_passkey: JByteArray,
     call_link_public_params: JByteArray,
+    restrictions: jint,
     request_id: jlong,
 ) -> Result<()> {
     let sfu_url = env.get_string(&sfu_url)?;
@@ -569,6 +582,7 @@ pub fn create_call_link(
         call_links::CallLinkRootKey::try_from(env.convert_byte_array(root_key)?.as_slice())?;
     let admin_passkey = env.convert_byte_array(admin_passkey)?;
     let call_link_public_params = env.convert_byte_array(call_link_public_params)?;
+    let restrictions = jint_to_restrictions(restrictions);
 
     let call_manager = unsafe { ptr_as_mut(call_manager)? };
     let platform = call_manager.platform()?.try_clone()?;
@@ -579,6 +593,7 @@ pub fn create_call_link(
         &create_credential_presentation,
         &admin_passkey,
         &call_link_public_params,
+        restrictions,
         Box::new(move |result| {
             platform.handle_call_link_result(request_id as u32, result);
         }),
@@ -618,11 +633,7 @@ pub fn update_call_link(
             root_key.encrypt(name.as_bytes(), rand::rngs::OsRng)
         }
     });
-    let new_restrictions = match new_restrictions {
-        0 => Some(CallLinkRestrictions::None),
-        1 => Some(CallLinkRestrictions::AdminApproval),
-        _ => None,
-    };
+    let new_restrictions = jint_to_restrictions(new_restrictions);
     let new_revoked = match new_revoked {
         0 => Some(false),
         1 => Some(true),
@@ -755,6 +766,7 @@ pub fn peek_call_link_call(
         Some(hex::encode(root_key.derive_room_id())),
         call_links::auth_header_from_auth_credential(&auth_credential_presentation),
         Arc::new(CallLinkMemberResolver::from(&root_key)),
+        Some(root_key),
         Box::new(move |result| platform.handle_peek_result(request_id, result)),
     );
     Ok(())
@@ -1160,4 +1172,12 @@ pub fn raise_hand(
     let call_manager = unsafe { ptr_as_mut(call_manager)? };
     call_manager.raise_hand(client_id, raise);
     Ok(())
+}
+
+fn jint_to_restrictions(raw_restrictions: jint) -> Option<CallLinkRestrictions> {
+    match raw_restrictions {
+        0 => Some(CallLinkRestrictions::None),
+        1 => Some(CallLinkRestrictions::AdminApproval),
+        _ => None,
+    }
 }

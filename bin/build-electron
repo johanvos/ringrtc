@@ -1,7 +1,7 @@
 #!/bin/sh
 
 #
-# Copyright 2019-2021 Signal Messenger, LLC
+# Copyright 2024 Signal Messenger, LLC
 # SPDX-License-Identifier: AGPL-3.0-only
 #
 
@@ -11,11 +11,11 @@ set -e
 . "$(dirname "$0")"/env.sh
 
 # Note: make sure to only use NodeJS architectures here, like x64, ia32, arm64, etc.
-TARGET_ARCH=${TARGET_ARCH:-x64}
+TARGET_ARCH=${TARGET_ARCH:-$(uname -m)}
 
 usage()
 {
-    echo 'usage: build-electron [-d|-r|-c] [--webrtc-only|--ringrtc-only] [--archive-webrtc]
+    echo 'usage: build-electron [-d|-r|-c] [--webrtc-only|--ringrtc-only] [--archive-webrtc] [--build-for-simulator]
     where:
         -d to create a debug build (default)
         -r to create a release build
@@ -23,6 +23,9 @@ usage()
 
         --webrtc-only builds libwebrtc.a only
         --ringrtc-only builds libringrtc-ARCH.node only
+        --webrtc-tests also builds webrtc tests
+        --test-ringrtc-adm also tests the ringrtc ADM.
+        --build-for-simulator also builds extra test tools used in simulators
 
         --archive-webrtc generates an archive suitable for later --ringrtc-only builds'
 }
@@ -39,6 +42,8 @@ clean()
 BUILD_TYPE=debug
 BUILD_WHAT=all
 ARCHIVE_WEBRTC=
+TEST_RINGRTC_ADM=
+BUILD_FOR_SIMULATOR=
 
 while [ "$1" != "" ]; do
     case $1 in
@@ -48,6 +53,9 @@ while [ "$1" != "" ]; do
         -r | --release )
             BUILD_TYPE=release
             ;;
+        --webrtc-tests )
+            BUILD_WEBRTC_TESTS=yes
+            ;;
         --webrtc-only )
             BUILD_WHAT=webrtc
             ;;
@@ -56,6 +64,12 @@ while [ "$1" != "" ]; do
             ;;
         --archive-webrtc )
             ARCHIVE_WEBRTC=yes
+            ;;
+        --test-ringrtc-adm )
+            TEST_RINGRTC_ADM=yes
+            ;;
+        --build-for-simulator )
+            BUILD_FOR_SIMULATOR=yes
             ;;
         -c | --clean )
             clean
@@ -73,17 +87,21 @@ while [ "$1" != "" ]; do
 done
 
 case "$TARGET_ARCH" in
-    "x64")
+    "x64"|"x86_64")
         GN_ARCH=x64
         CARGO_ARCH=x86_64
+        # Normalize TARGET_ARCH to x64
+        TARGET_ARCH=x64
         ;;
     "ia32")
         GN_ARCH=x86
         CARGO_ARCH=i686
         ;;
-    "arm64")
+    "arm64"|"aarch64")
         GN_ARCH=arm64
         CARGO_ARCH=aarch64
+        # Normalize TARGET_ARCH to arm64
+        TARGET_ARCH=arm64
         ;;
     *)
         echo "Unsupported architecture"
@@ -91,24 +109,53 @@ case "$TARGET_ARCH" in
         ;;
 esac
 
-export MACOSX_DEPLOYMENT_TARGET="10.13"
+export MACOSX_DEPLOYMENT_TARGET="10.15"
 
 # Build WebRTC.
 if [ "${BUILD_WHAT}" = "all" ] || [ "${BUILD_WHAT}" = "webrtc" ]
 then
     echo "Building WebRTC for ${GN_ARCH}"
 
-    WEBRTC_ARGS="target_cpu=\"${GN_ARCH}\" rtc_build_examples=false rtc_build_tools=false rtc_include_tests=false rtc_enable_protobuf=false rtc_use_x11=false rtc_enable_sctp=false rtc_libvpx_build_vp9=true rtc_include_ilbc=false rtc_disable_metrics=true rtc_disable_trace_events=true"
+    WEBRTC_ARGS="target_cpu=\"${GN_ARCH}\" rtc_build_examples=false rtc_build_tools=false rtc_use_x11=false rtc_enable_sctp=false rtc_libvpx_build_vp9=true rtc_disable_metrics=true rtc_disable_trace_events=true"
+
+    if [ -n "${BUILD_FOR_SIMULATOR}" ]
+    then
+      WEBRTC_ARGS="${WEBRTC_ARGS} rtc_use_dummy_audio_file_devices=true"
+    fi
+
+    if [ -n "${BUILD_WEBRTC_TESTS}" ]
+    then
+      WEBRTC_ARGS="${WEBRTC_ARGS} rtc_include_tests=true rtc_enable_protobuf=true"
+    else
+      WEBRTC_ARGS="${WEBRTC_ARGS} rtc_include_tests=false rtc_enable_protobuf=false"
+    fi
 
     if [ "${BUILD_TYPE}" = "release" ]
     then
         WEBRTC_ARGS="${WEBRTC_ARGS} is_debug=false symbol_level=1"
     fi
 
+    # SME requires the ARMv9-A architecture, while most ARM64 devices are ARMv8. This was causing
+    # "undefined symbol: __arm_tpidr2_save" errors on such devices, including GitHub's ubuntu-22.04-arm runner.
+    # https://issuetracker.google.com/issues/359006069
+    # https://chromium.googlesource.com/libyuv/libyuv/+/61354d2671d9b5c73cc964415fe25bc76cea051a/BUILD.gn#273
+    if [ "$(uname)" = "Linux" ] && [ "${TARGET_ARCH}" = "arm64" ]
+    then
+      WEBRTC_ARGS="${WEBRTC_ARGS} libyuv_use_sme=false"
+    fi
+
     (
         cd src/webrtc/src
         gn gen -C "${OUTPUT_DIR}/${BUILD_TYPE}" "--args=${WEBRTC_ARGS}"
         ninja -C "${OUTPUT_DIR}/${BUILD_TYPE}" webrtc
+        if [ -n "${BUILD_WEBRTC_TESTS}" ]
+        then
+          ninja -C "${OUTPUT_DIR}/${BUILD_TYPE}" default
+          echo "Downloading test resources"
+          download_from_google_storage --directory --recursive \
+               --num_threads=10 --no_auth --quiet \
+               --bucket chromium-webrtc-resources resources
+        fi
         tools_webrtc/libs/generate_licenses.py --target :webrtc "${OUTPUT_DIR}/${BUILD_TYPE}" "${OUTPUT_DIR}/${BUILD_TYPE}"
     )
 
@@ -118,7 +165,12 @@ then
         if [ ! -e "${OUTPUT_DIR}/${STATIC_LIB_PATH}" ]; then
             STATIC_LIB_PATH="${BUILD_TYPE}"/obj/libwebrtc.a
         fi
-        tar -c --auto-compress --dereference -f "${OUTPUT_DIR}"/webrtc-"${WEBRTC_VERSION}"-"${HOST_PLATFORM}"-"${TARGET_ARCH}"-${BUILD_TYPE}.tar.bz2 -C "${OUTPUT_DIR}" "${STATIC_LIB_PATH}" "${BUILD_TYPE}/LICENSE.md"
+        ARCHIVE_NAME=webrtc-"${WEBRTC_VERSION}"-"${HOST_PLATFORM}"-"${TARGET_ARCH}"-"${BUILD_TYPE}"
+        if [ -n "${BUILD_FOR_SIMULATOR}" ]
+        then
+          ARCHIVE_NAME="${ARCHIVE_NAME}"-sim
+        fi
+        tar -c --auto-compress --dereference -f "${OUTPUT_DIR}"/"${ARCHIVE_NAME}".tar.bz2 -C "${OUTPUT_DIR}" "${STATIC_LIB_PATH}" "${BUILD_TYPE}/LICENSE.md"
     fi
 fi
 
@@ -150,7 +202,7 @@ then
             exit 1
     esac
 
-    echo "Building for platform ${DEFAULT_PLATFORM}, TARGET_ARCH=${TARGET_ARCH}, CARGO_TARGET=${CARGO_TARGET}"
+    echo "Building for platform ${DEFAULT_PLATFORM}, TARGET_ARCH=${TARGET_ARCH}, CARGO_TARGET=${CARGO_TARGET}, BUILD_FOR_SIMULATOR=${BUILD_FOR_SIMULATOR}"
 
     # Build and link the final RingRTC library.
     (
@@ -201,14 +253,22 @@ then
             exit 1 # unreachable
         fi
 
+        # Propagate this cross-compilation request to child processes;
+        # e.g. cubeb rust libs.
+        export CARGO_BUILD_TARGET="${CARGO_TARGET}"
         RUSTFLAGS="${RUSTFLAGS}" OUTPUT_DIR="${OUTPUT_DIR}" cargo rustc --package ringrtc --target ${CARGO_TARGET} --features electron ${INCLUDE_RELEASE_FLAG:+"--release"} --crate-type cdylib
+
+        if [ "${TEST_RINGRTC_ADM}" = "yes" ]; then
+          RUSTFLAGS="${RUSTFLAGS}" OUTPUT_DIR="${OUTPUT_DIR}" cargo test --package ringrtc --target ${CARGO_TARGET} --features electron ${INCLUDE_RELEASE_FLAG:+"--release"} -- --nocapture audio_device_module_tests
+        fi
+
 
         mkdir -p src/node/build/${DEFAULT_PLATFORM}
         copy_to_node target/${CARGO_TARGET}/${BUILD_TYPE}/${OUTPUT_LIBRARY} src/node/build/${DEFAULT_PLATFORM}/libringrtc-"${TARGET_ARCH}".node
 
-        if [ "${BUILD_TYPE}" = "release" ]
+        if [ "${BUILD_TYPE}" = "release" ] && [ "$(command -v dump_syms)" ];
         then
-            tar -c --auto-compress --dereference -f "${OUTPUT_DIR}"/${BUILD_TYPE}/libringrtc-"${PROJECT_VERSION}"-${DEFAULT_PLATFORM}-"${TARGET_ARCH}"-debuginfo.tar.bz2 -C "$(dirname target/${CARGO_TARGET}/${BUILD_TYPE}/${DEBUG_PACKAGE})" "$(basename ${DEBUG_PACKAGE})"
+          dump_syms "target/${CARGO_TARGET}/${BUILD_TYPE}/${DEBUG_PACKAGE}" -o "${OUTPUT_DIR}"/${BUILD_TYPE}/libringrtc-"${PROJECT_VERSION}"-${DEFAULT_PLATFORM}-"${TARGET_ARCH}"-debuginfo.sym
         fi
     )
 fi

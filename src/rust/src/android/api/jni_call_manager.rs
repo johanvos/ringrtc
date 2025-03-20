@@ -279,7 +279,6 @@ pub unsafe extern "C" fn Java_org_signal_ringrtc_CallManager_ringrtcReceivedOffe
     message_age_sec: jlong,
     call_media_type: jint,
     local_device: jint,
-    jni_is_local_device_primary: jboolean,
     sender_identity_key: JByteArray,
     receiver_identity_key: JByteArray,
 ) {
@@ -293,7 +292,6 @@ pub unsafe extern "C" fn Java_org_signal_ringrtc_CallManager_ringrtcReceivedOffe
         message_age_sec as u64,
         CallMediaType::from_i32(call_media_type),
         local_device as DeviceId,
-        jni_is_local_device_primary == jni::sys::JNI_TRUE,
         sender_identity_key,
         receiver_identity_key,
     ) {
@@ -496,6 +494,22 @@ pub unsafe extern "C" fn Java_org_signal_ringrtc_CallManager_ringrtcGetActiveCal
 
 #[no_mangle]
 #[allow(non_snake_case)]
+pub unsafe extern "C" fn Java_org_signal_ringrtc_CallManager_ringrtcSetAudioEnable(
+    mut env: JNIEnv,
+    _object: JObject,
+    call_manager: jlong,
+    enable: jboolean,
+) {
+    match call_manager::set_audio_enable(call_manager as *mut AndroidCallManager, enable != 0) {
+        Ok(v) => v,
+        Err(e) => {
+            error::throw_error(&mut env, e);
+        }
+    }
+}
+
+#[no_mangle]
+#[allow(non_snake_case)]
 pub unsafe extern "C" fn Java_org_signal_ringrtc_CallManager_ringrtcSetVideoEnable(
     mut env: JNIEnv,
     _object: JObject,
@@ -614,6 +628,7 @@ pub unsafe extern "C" fn Java_org_signal_ringrtc_CallManager_ringrtcCreateCallLi
     root_key: JByteArray,
     admin_passkey: JByteArray,
     call_link_public_params: JByteArray,
+    restrictions: jint,
     request_id: jlong,
 ) {
     match call_manager::create_call_link(
@@ -624,6 +639,7 @@ pub unsafe extern "C" fn Java_org_signal_ringrtc_CallManager_ringrtcCreateCallLi
         root_key,
         admin_passkey,
         call_link_public_params,
+        restrictions,
         request_id,
     ) {
         Ok(v) => v,

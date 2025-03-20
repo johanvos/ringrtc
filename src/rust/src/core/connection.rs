@@ -1292,8 +1292,10 @@ where
     ) -> Result<()> {
         let mut added_sdps = vec![];
         let mut removed_addresses = vec![];
+        let mut removed_ports = vec![];
         for candidate in remote_ice_candidates {
             if let Some(removed_address) = candidate.removed_address() {
+                removed_ports.push(removed_address.port());
                 removed_addresses.push(removed_address);
                 // We don't add a candidate if it's both added and removed because of
                 // the backwards-compatibility mechanism we have that contains a dummy
@@ -1312,6 +1314,8 @@ where
                 removed_addresses.len()
             )
         );
+
+        info!("Remote ICE candidates removed; ports: {:?}", removed_ports);
 
         for added_sdp in added_sdps {
             if let Err(e) = pc.add_ice_candidate_from_sdp(&added_sdp) {
@@ -1409,10 +1413,13 @@ where
                 previous.and_then(|sender_status| sender_status.video_enabled);
             let previous_sharing_screen =
                 previous.and_then(|sender_status| sender_status.sharing_screen);
+            let previous_audio_enabled =
+                previous.and_then(|sender_status| sender_status.audio_enabled);
             data.sender_status = Some(protobuf::rtp_data::SenderStatus {
                 id: Some(u64::from(self.call_id)),
                 video_enabled: updated.video_enabled.or(previous_video_enabled),
                 sharing_screen: updated.sharing_screen.or(previous_sharing_screen),
+                audio_enabled: updated.audio_enabled.or(previous_audio_enabled),
             });
         })
     }
@@ -1431,7 +1438,7 @@ where
             let mut state = self.accumulated_rtp_data_message.lock()?;
             populate(&mut state);
             state.seqnum = Some(state.seqnum.unwrap_or(0) + 1);
-            state.clone()
+            state
         };
         info!("Sending RTP data message: {:?}", message);
         self.send_via_rtp_data(webrtc_data, &message)
@@ -1467,8 +1474,8 @@ where
             pt: RTP_DATA_PAYLOAD_TYPE,
             // TODO: Once all clients are updated to accept the NEW_RTP_DATA_SSRC, use that.
             ssrc: match self.direction {
-                CallDirection::InComing => OLD_RTP_DATA_SSRC_FOR_INCOMING,
-                CallDirection::OutGoing => OLD_RTP_DATA_SSRC_FOR_OUTGOING,
+                CallDirection::Incoming => OLD_RTP_DATA_SSRC_FOR_INCOMING,
+                CallDirection::Outgoing => OLD_RTP_DATA_SSRC_FOR_OUTGOING,
             },
             // This has to be incremented to make sure SRTP functions properly, but rollovers are OK.
             seqnum: webrtc_data.last_sent_rtp_data_timestamp as rtp::SequenceNumber,
@@ -1740,7 +1747,7 @@ where
             .iter()
             .map(|address| address.port())
             .collect();
-        info!("Local ICE candidates removed; ports: {:?}", removed_ports,);
+        info!("Local ICE candidates removed; ports: {:?}", removed_ports);
 
         let candidates = removed_addresses
             .into_iter()
@@ -1824,9 +1831,8 @@ where
         debug!("Received RTP data message: {:?}", message);
 
         let mut message_handled = false;
-        let original_message = message.clone();
         if let Some(accepted) = message.accepted {
-            if let CallDirection::OutGoing = self.direction() {
+            if let CallDirection::Outgoing = self.direction() {
                 self.inject_received_accepted_via_rtp_data(CallId::new(accepted.id()))
                     .unwrap_or_else(|e| warn!("unable to inject remote accepted event: {}", e));
             } else {
@@ -1859,6 +1865,7 @@ where
                 signaling::SenderStatus {
                     video_enabled: sender_status.video_enabled,
                     sharing_screen: sender_status.sharing_screen,
+                    audio_enabled: sender_status.audio_enabled,
                 },
                 seqnum,
             )
@@ -1875,7 +1882,7 @@ where
             message_handled = true;
         };
         if !message_handled {
-            info!("Unhandled RTP data message: {:?}", original_message);
+            info!("Unhandled RTP data message: {:?}", message);
         }
     }
 
@@ -1928,7 +1935,7 @@ where
     ///
     /// * `call_id` - Call ID from the remote peer.
     /// * `max_bitrate_bps` - the bitrate that the remote peer wants to use for
-    /// the session.
+    ///   the session.
     pub fn inject_received_receiver_status_via_rtp_data(
         &mut self,
         call_id: CallId,
@@ -2067,7 +2074,6 @@ where
             .lock()
             .unwrap()
             .sender_status
-            .clone()
     }
 }
 
@@ -2169,7 +2175,7 @@ where
         let mut last_received_rtp_data_timestamp = self
             .last_received_rtp_data_timestamp
             .lock()
-            .expect("Lock last_recived_rtp_data_timestamp");
+            .expect("Lock last_received_rtp_data_timestamp");
 
         // We allow equal timestamps because old clients send
         // multiple messages with the same timestamp.

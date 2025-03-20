@@ -7,7 +7,6 @@
 // a Delegate implemented by the application.
 
 import SignalRingRTC.RingRTC
-import SignalCoreKit
 
 // Same as rust http::Method.
 public enum HTTPMethod: Int32 {
@@ -30,7 +29,7 @@ public struct HTTPRequest {
 
     static func fromRtc(_ rtcRequest: rtc_http_Request) -> Self? {
         guard let method = HTTPMethod.fromRtc(rtcRequest.method) else {
-            owsFailDebug("unexpected HTTP request method")
+            failDebug("unexpected HTTP request method")
             return nil
         }
 
@@ -93,7 +92,7 @@ public protocol HTTPDelegate: AnyObject {
     // An HTTP request should be sent to the given url.
     // The HTTP response should be returned by calling the HttpClient.receivedResponse(requestId, ...).
     // or HttpClient.requestFailed(requestId) if the request failed to get a response.
-    // Invoked on the main thread, asychronously.
+    @MainActor
     func sendRequest(requestId: UInt32, request: HTTPRequest)
 }
 
@@ -105,7 +104,7 @@ public class HTTPClient {
     public init(delegate: HTTPDelegate? = nil) {
         self.delegateWrapper = HTTPDelegateWrapper(delegate)
         guard let rtcClient = rtc_http_Client_create(self.delegateWrapper.asRtc()) else {
-            owsFail("unable to create RingRTC HttpClient")
+            fail("unable to create RingRTC HttpClient")
         }
 
         self.rtcClient = rtcClient
@@ -125,8 +124,8 @@ public class HTTPClient {
         }
     }
 
+    @MainActor
     public func receivedResponse(requestId: UInt32, response: HTTPResponse) {
-        AssertIsOnMainThread()
         Logger.debug("HttpClient.receivedResponse")
 
         let rtcResponse = rtc_http_Response.allocate(from: response)
@@ -136,8 +135,8 @@ public class HTTPClient {
         rtc_http_Client_received_response(self.rtcClient, requestId, rtcResponse)
     }
 
+    @MainActor
     public func httpRequestFailed(requestId: UInt32) {
-        AssertIsOnMainThread()
         Logger.debug("httpRequestFailed")
 
         rtc_http_Client_request_failed(self.rtcClient, requestId)
@@ -190,7 +189,7 @@ private class HTTPDelegateWrapper {
                 }
 
                 Logger.debug("HTTPDelegate.sendRequest")
-                DispatchQueue.main.async {
+                Task { @MainActor in
                     Logger.debug("HTTPDelegate.sendRequest (on main.async)")
 
                     guard let delegate = wrapper.delegate else {

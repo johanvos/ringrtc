@@ -178,7 +178,6 @@ pub fn received_offer(
     age_sec: u64,
     call_media_type: CallMediaType,
     receiver_device_id: DeviceId,
-    receiver_device_is_primary: bool,
     sender_identity_key: Option<Vec<u8>>,
     receiver_identity_key: Option<Vec<u8>>,
 ) -> Result<()> {
@@ -227,7 +226,6 @@ pub fn received_offer(
             age: Duration::from_secs(age_sec),
             sender_device_id,
             receiver_device_id,
-            receiver_device_is_primary,
             sender_identity_key,
             receiver_identity_key,
         },
@@ -316,6 +314,16 @@ pub fn get_active_call_context(call_manager: *mut IosCallManager) -> Result<*mut
     let app_call_context = call.call_context()?;
 
     Ok(app_call_context.object)
+}
+
+/// CMI request to set the audio status
+pub fn set_audio_enable(call_manager: *mut IosCallManager, enable: bool) -> Result<()> {
+    let call_manager = unsafe { ptr_as_mut(call_manager)? };
+    let mut active_connection = call_manager.active_connection()?;
+    active_connection.update_sender_status(signaling::SenderStatus {
+        audio_enabled: Some(enable),
+        ..Default::default()
+    })
 }
 
 /// CMI request to set the video status
@@ -641,7 +649,6 @@ pub fn validate_offer(
         age: Duration::from_secs(age_sec),
         sender_device_id: 1,
         receiver_device_id: 1,
-        receiver_device_is_primary: true,
         sender_identity_key: vec![],
         receiver_identity_key: vec![],
     })

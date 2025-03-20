@@ -8,9 +8,7 @@ cscope.*
 *.code-workspace
 **/.vscode
 .idea
-src/webrtc/
-src/webrtc/.cipd
-src/webrtc/.gclient*
+src/webrtc*
 src/jar.list
 .project
 .classpath
@@ -25,3 +23,4 @@ src/java/tring/src/main/resources/libringrtc.dylib
 src/java/tring/target
 src/java/tringapi/target/
 src/rust/tringlib.h
+.spr.yml

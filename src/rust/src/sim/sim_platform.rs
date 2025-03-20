@@ -183,8 +183,8 @@ impl Platform for SimPlatform {
             Err(SimError::StartCallError.into())
         } else {
             let _ = match direction {
-                CallDirection::OutGoing => self.stats.start_outgoing.fetch_add(1, Ordering::AcqRel),
-                CallDirection::InComing => self.stats.start_incoming.fetch_add(1, Ordering::AcqRel),
+                CallDirection::Outgoing => self.stats.start_outgoing.fetch_add(1, Ordering::AcqRel),
+                CallDirection::Incoming => self.stats.start_incoming.fetch_add(1, Ordering::AcqRel),
             };
             Ok(())
         }
@@ -527,6 +527,14 @@ impl Platform for SimPlatform {
         network_route: NetworkRoute,
     ) {
         info!("handle_network_route_changed(): {:?}", network_route);
+    }
+
+    fn handle_speaking_notification(
+        &self,
+        _client_id: group_call::ClientId,
+        event: group_call::SpeechEvent,
+    ) {
+        info!("handle_speaking_notification(): {:?}", event,);
     }
 
     fn handle_audio_levels(

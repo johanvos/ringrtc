@@ -24,305 +24,258 @@ final class CallLinkTests: XCTestCase {
         XCTAssertEqual(String(describing: Self.EXAMPLE_KEY), "bcdf-ghkm-npqr-stxz-bcdf-ghkm-npqr-stxz")
     }
 
-    func testCreateSuccess() throws {
+    @MainActor
+    func testCreateSuccess() async throws {
         let delegate = TestDelegate()
         let httpClient = HTTPClient(delegate: delegate)
         let sfu = SFUClient(httpClient: httpClient)
 
-        let callbackCompleted = expectation(description: "callbackCompleted")
-        sfu.createCallLink(sfuUrl: "sfu.example", createCredentialPresentation: [1, 2, 3], linkRootKey: Self.EXAMPLE_KEY, adminPasskey: CallLinkRootKey.generateAdminPasskey(), callLinkPublicParams: [4, 5, 6])
-            .done { result in
-                switch result {
-                case .success(let state):
-                    XCTAssertEqual(state.expiration.timeIntervalSince1970, Self.EXPIRATION_EPOCH_SECONDS)
-                case .failure(let code):
-                    XCTFail("unexpected failure: \(code)")
-                }
-                callbackCompleted.fulfill()
-            }
+        delegate.onSendRequest { id, request in
+            XCTAssert(request.url.starts(with: "sfu.example"))
+            XCTAssertEqual(request.method, .put)
+            httpClient.receivedResponse(requestId: id, response: HTTPResponse(statusCode: 200, body: Self.EXAMPLE_STATE_JSON.data(using: .utf8)))
+        }
 
-        wait(for: [delegate.sentHttpRequestExpectation], timeout: 1.0)
-        XCTAssert(try XCTUnwrap(delegate.sentHttpRequestUrl).starts(with: "sfu.example"))
-        XCTAssertEqual(delegate.sentHttpRequestMethod, .put)
-        let requestId = try XCTUnwrap(delegate.sentHttpRequestId)
-        httpClient.receivedResponse(requestId: requestId, response: HTTPResponse(statusCode: 200, body: Self.EXAMPLE_STATE_JSON.data(using: .utf8)))
-        waitForExpectations(timeout: 1.0)
+        let result = await sfu.createCallLink(sfuUrl: "sfu.example", createCredentialPresentation: [1, 2, 3], linkRootKey: Self.EXAMPLE_KEY, adminPasskey: CallLinkRootKey.generateAdminPasskey(), callLinkPublicParams: [4, 5, 6], restrictions: .none)
+        switch result {
+        case .success(let state):
+            XCTAssertEqual(state.expiration.timeIntervalSince1970, Self.EXPIRATION_EPOCH_SECONDS)
+        case .failure(let code):
+            XCTFail("unexpected failure: \(code)")
+        }
     }
 
-    func testCreateFailure() throws {
+    @MainActor
+    func testCreateFailure() async throws {
         let delegate = TestDelegate()
         let httpClient = HTTPClient(delegate: delegate)
         let sfu = SFUClient(httpClient: httpClient)
 
-        let callbackCompleted = expectation(description: "callbackCompleted")
-        sfu.createCallLink(sfuUrl: "sfu.example", createCredentialPresentation: [1, 2, 3], linkRootKey: Self.EXAMPLE_KEY, adminPasskey: CallLinkRootKey.generateAdminPasskey(), callLinkPublicParams: [4, 5, 6])
-            .done { result in
-                switch result {
-                case .success(let state):
-                    XCTFail("unexpected success: \(state)")
-                case .failure(let code):
-                    XCTAssertEqual(code, 403)
-                }
-                callbackCompleted.fulfill()
-            }
+        delegate.onSendRequest { id, request in
+            XCTAssert(request.url.starts(with: "sfu.example"))
+            XCTAssertEqual(request.method, .put)
+            httpClient.receivedResponse(requestId: id, response: HTTPResponse(statusCode: 403, body: Data()))
+        }
 
-        wait(for: [delegate.sentHttpRequestExpectation], timeout: 1.0)
-        XCTAssert(try XCTUnwrap(delegate.sentHttpRequestUrl).starts(with: "sfu.example"))
-        XCTAssertEqual(delegate.sentHttpRequestMethod, .put)
-        let requestId = try XCTUnwrap(delegate.sentHttpRequestId)
-        httpClient.receivedResponse(requestId: requestId, response: HTTPResponse(statusCode: 403, body: Data()))
-        waitForExpectations(timeout: 1.0)
+        let result = await sfu.createCallLink(sfuUrl: "sfu.example", createCredentialPresentation: [1, 2, 3], linkRootKey: Self.EXAMPLE_KEY, adminPasskey: CallLinkRootKey.generateAdminPasskey(), callLinkPublicParams: [4, 5, 6], restrictions: .adminApproval)
+        switch result {
+        case .success(let state):
+            XCTFail("unexpected success: \(state)")
+        case .failure(let code):
+            XCTAssertEqual(code, 403)
+        }
     }
 
-    func testReadSuccess() throws {
+    @MainActor
+    func testReadSuccess() async throws {
         let delegate = TestDelegate()
         let httpClient = HTTPClient(delegate: delegate)
         let sfu = SFUClient(httpClient: httpClient)
 
-        let callbackCompleted = expectation(description: "callbackCompleted")
-        sfu.readCallLink(sfuUrl: "sfu.example", authCredentialPresentation: [1, 2, 3], linkRootKey: Self.EXAMPLE_KEY)
-            .done { result in
-                switch result {
-                case .success(let state):
-                    XCTAssertEqual(state.expiration.timeIntervalSince1970, Self.EXPIRATION_EPOCH_SECONDS)
-                case .failure(let code):
-                    XCTFail("unexpected failure: \(code)")
-                }
-                callbackCompleted.fulfill()
-            }
+        delegate.onSendRequest { id, request in
+            XCTAssert(request.url.starts(with: "sfu.example"))
+            XCTAssertEqual(request.method, .get)
+            httpClient.receivedResponse(requestId: id, response: HTTPResponse(statusCode: 200, body: Self.EXAMPLE_STATE_JSON.data(using: .utf8)))
+        }
 
-        wait(for: [delegate.sentHttpRequestExpectation], timeout: 1.0)
-        XCTAssert(try XCTUnwrap(delegate.sentHttpRequestUrl).starts(with: "sfu.example"))
-        XCTAssertEqual(delegate.sentHttpRequestMethod, .get)
-        let requestId = try XCTUnwrap(delegate.sentHttpRequestId)
-        httpClient.receivedResponse(requestId: requestId, response: HTTPResponse(statusCode: 200, body: Self.EXAMPLE_STATE_JSON.data(using: .utf8)))
-        waitForExpectations(timeout: 1.0)
+        let result = await sfu.readCallLink(sfuUrl: "sfu.example", authCredentialPresentation: [1, 2, 3], linkRootKey: Self.EXAMPLE_KEY)
+        switch result {
+        case .success(let state):
+            XCTAssertEqual(state.expiration.timeIntervalSince1970, Self.EXPIRATION_EPOCH_SECONDS)
+        case .failure(let code):
+            XCTFail("unexpected failure: \(code)")
+        }
     }
 
-    func testReadFailure() throws {
+    @MainActor
+    func testReadFailure() async throws {
         let delegate = TestDelegate()
         let httpClient = HTTPClient(delegate: delegate)
         let sfu = SFUClient(httpClient: httpClient)
 
-        let callbackCompleted = expectation(description: "callbackCompleted")
-        sfu.readCallLink(sfuUrl: "sfu.example", authCredentialPresentation: [1, 2, 3], linkRootKey: Self.EXAMPLE_KEY)
-            .done { result in
-                switch result {
-                case .success(let state):
-                    XCTFail("unexpected success: \(state)")
-                case .failure(let code):
-                    XCTAssertEqual(code, 404)
-                }
-                callbackCompleted.fulfill()
-            }
+        delegate.onSendRequest { id, request in
+            XCTAssert(request.url.starts(with: "sfu.example"))
+            XCTAssertEqual(request.method, .get)
+            httpClient.receivedResponse(requestId: id, response: HTTPResponse(statusCode: 404, body: Data()))
+        }
 
-        wait(for: [delegate.sentHttpRequestExpectation], timeout: 1.0)
-        XCTAssert(try XCTUnwrap(delegate.sentHttpRequestUrl).starts(with: "sfu.example"))
-        XCTAssertEqual(delegate.sentHttpRequestMethod, .get)
-        let requestId = try XCTUnwrap(delegate.sentHttpRequestId)
-        httpClient.receivedResponse(requestId: requestId, response: HTTPResponse(statusCode: 404, body: Data()))
-        waitForExpectations(timeout: 1.0)
+        let result = await sfu.readCallLink(sfuUrl: "sfu.example", authCredentialPresentation: [1, 2, 3], linkRootKey: Self.EXAMPLE_KEY)
+        switch result {
+        case .success(let state):
+            XCTFail("unexpected success: \(state)")
+        case .failure(let code):
+            XCTAssertEqual(code, 404)
+        }
     }
 
-    func testUpdateNameSuccess() throws {
+    @MainActor
+    func testUpdateNameSuccess() async throws {
         let delegate = TestDelegate()
         let httpClient = HTTPClient(delegate: delegate)
         let sfu = SFUClient(httpClient: httpClient)
 
-        let callbackCompleted = expectation(description: "callbackCompleted")
-        sfu.updateCallLinkName(sfuUrl: "sfu.example", authCredentialPresentation: [1, 2, 3], linkRootKey: Self.EXAMPLE_KEY, adminPasskey: CallLinkRootKey.generateAdminPasskey(), newName: "Secret Hideout")
-            .done { result in
-                switch result {
-                case .success(_):
-                    // Don't bother checking anything here, since we are mocking the SFU's responses anyway.
-                    break
-                case .failure(let code):
-                    XCTFail("unexpected failure: \(code)")
-                }
-                callbackCompleted.fulfill()
-            }
+        delegate.onSendRequest { id, request in
+            XCTAssert(request.url.starts(with: "sfu.example"))
+            XCTAssertEqual(request.method, .put)
+            httpClient.receivedResponse(requestId: id, response: HTTPResponse(statusCode: 200, body: Self.EXAMPLE_STATE_JSON.data(using: .utf8)))
+        }
 
-        wait(for: [delegate.sentHttpRequestExpectation], timeout: 1.0)
-        XCTAssert(try XCTUnwrap(delegate.sentHttpRequestUrl).starts(with: "sfu.example"))
-        XCTAssertEqual(delegate.sentHttpRequestMethod, .put)
-        let requestId = try XCTUnwrap(delegate.sentHttpRequestId)
-        httpClient.receivedResponse(requestId: requestId, response: HTTPResponse(statusCode: 200, body: Self.EXAMPLE_STATE_JSON.data(using: .utf8)))
-        waitForExpectations(timeout: 1.0)
+        let result = await sfu.updateCallLinkName(sfuUrl: "sfu.example", authCredentialPresentation: [1, 2, 3], linkRootKey: Self.EXAMPLE_KEY, adminPasskey: CallLinkRootKey.generateAdminPasskey(), newName: "Secret Hideout")
+
+        switch result {
+        case .success(_):
+            // Don't bother checking anything here, since we are mocking the SFU's responses anyway.
+            break
+        case .failure(let code):
+            XCTFail("unexpected failure: \(code)")
+        }
     }
 
-    func testUpdateNameFailure() throws {
+    @MainActor
+    func testUpdateNameFailure() async throws {
         let delegate = TestDelegate()
         let httpClient = HTTPClient(delegate: delegate)
         let sfu = SFUClient(httpClient: httpClient)
 
-        let callbackCompleted = expectation(description: "callbackCompleted")
-        sfu.updateCallLinkName(sfuUrl: "sfu.example", authCredentialPresentation: [1, 2, 3], linkRootKey: Self.EXAMPLE_KEY, adminPasskey: CallLinkRootKey.generateAdminPasskey(), newName: "Secret Hideout")
-            .done { result in
-                switch result {
-                case .success(let state):
-                    XCTFail("unexpected success: \(state)")
-                case .failure(let code):
-                    XCTAssertEqual(code, 403)
-                }
-                callbackCompleted.fulfill()
-            }
+        delegate.onSendRequest { id, request in
+            XCTAssert(request.url.starts(with: "sfu.example"))
+            XCTAssertEqual(request.method, .put)
+            httpClient.receivedResponse(requestId: id, response: HTTPResponse(statusCode: 403, body: Data()))
+        }
 
-        wait(for: [delegate.sentHttpRequestExpectation], timeout: 1.0)
-        XCTAssert(try XCTUnwrap(delegate.sentHttpRequestUrl).starts(with: "sfu.example"))
-        XCTAssertEqual(delegate.sentHttpRequestMethod, .put)
-        let requestId = try XCTUnwrap(delegate.sentHttpRequestId)
-        httpClient.receivedResponse(requestId: requestId, response: HTTPResponse(statusCode: 403, body: Data()))
-        waitForExpectations(timeout: 1.0)
+        let result = await sfu.updateCallLinkName(sfuUrl: "sfu.example", authCredentialPresentation: [1, 2, 3], linkRootKey: Self.EXAMPLE_KEY, adminPasskey: CallLinkRootKey.generateAdminPasskey(), newName: "Secret Hideout")
+        switch result {
+        case .success(let state):
+            XCTFail("unexpected success: \(state)")
+        case .failure(let code):
+            XCTAssertEqual(code, 403)
+        }
     }
 
-    func testUpdateNameEmptySuccess() throws {
+    @MainActor
+    func testUpdateNameEmptySuccess() async throws {
         let delegate = TestDelegate()
         let httpClient = HTTPClient(delegate: delegate)
         let sfu = SFUClient(httpClient: httpClient)
 
-        let callbackCompleted = expectation(description: "callbackCompleted")
-        sfu.updateCallLinkName(sfuUrl: "sfu.example", authCredentialPresentation: [1, 2, 3], linkRootKey: Self.EXAMPLE_KEY, adminPasskey: CallLinkRootKey.generateAdminPasskey(), newName: "")
-            .done { result in
-                switch result {
-                case .success(_):
-                    // Don't bother checking anything here, since we are mocking the SFU's responses anyway.
-                    break
-                case .failure(let code):
-                    XCTFail("unexpected failure: \(code)")
-                }
-                callbackCompleted.fulfill()
-            }
+        delegate.onSendRequest { id, request in
+            XCTAssert(request.url.starts(with: "sfu.example"))
+            XCTAssertEqual(request.method, .put)
+            httpClient.receivedResponse(requestId: id, response: HTTPResponse(statusCode: 200, body: Self.EXAMPLE_STATE_JSON.data(using: .utf8)))
+        }
 
-        wait(for: [delegate.sentHttpRequestExpectation], timeout: 1.0)
-        XCTAssert(try XCTUnwrap(delegate.sentHttpRequestUrl).starts(with: "sfu.example"))
-        XCTAssertEqual(delegate.sentHttpRequestMethod, .put)
-        let requestId = try XCTUnwrap(delegate.sentHttpRequestId)
-        httpClient.receivedResponse(requestId: requestId, response: HTTPResponse(statusCode: 200, body: Self.EXAMPLE_STATE_JSON.data(using: .utf8)))
-        waitForExpectations(timeout: 1.0)
+        let result = await sfu.updateCallLinkName(sfuUrl: "sfu.example", authCredentialPresentation: [1, 2, 3], linkRootKey: Self.EXAMPLE_KEY, adminPasskey: CallLinkRootKey.generateAdminPasskey(), newName: "")
+        switch result {
+        case .success(_):
+            // Don't bother checking anything here, since we are mocking the SFU's responses anyway.
+            break
+        case .failure(let code):
+            XCTFail("unexpected failure: \(code)")
+        }
     }
 
-    func testUpdateRestrictionsSuccess() throws {
+    @MainActor
+    func testUpdateRestrictionsSuccess() async throws {
         let delegate = TestDelegate()
         let httpClient = HTTPClient(delegate: delegate)
         let sfu = SFUClient(httpClient: httpClient)
 
-        let callbackCompleted = expectation(description: "callbackCompleted")
-        sfu.updateCallLinkRestrictions(sfuUrl: "sfu.example", authCredentialPresentation: [1, 2, 3], linkRootKey: Self.EXAMPLE_KEY, adminPasskey: CallLinkRootKey.generateAdminPasskey(), restrictions: .adminApproval)
-            .done { result in
-                switch result {
-                case .success(_):
-                    // Don't bother checking anything here, since we are mocking the SFU's responses anyway.
-                    break
-                case .failure(let code):
-                    XCTFail("unexpected failure: \(code)")
-                }
-                callbackCompleted.fulfill()
-            }
+        delegate.onSendRequest { id, request in
+            XCTAssert(request.url.starts(with: "sfu.example"))
+            XCTAssertEqual(request.method, .put)
+            httpClient.receivedResponse(requestId: id, response: HTTPResponse(statusCode: 200, body: Self.EXAMPLE_STATE_JSON.data(using: .utf8)))
+        }
 
-        wait(for: [delegate.sentHttpRequestExpectation], timeout: 1.0)
-        XCTAssert(try XCTUnwrap(delegate.sentHttpRequestUrl).starts(with: "sfu.example"))
-        XCTAssertEqual(delegate.sentHttpRequestMethod, .put)
-        let requestId = try XCTUnwrap(delegate.sentHttpRequestId)
-        httpClient.receivedResponse(requestId: requestId, response: HTTPResponse(statusCode: 200, body: Self.EXAMPLE_STATE_JSON.data(using: .utf8)))
-        waitForExpectations(timeout: 1.0)
+        let result = await sfu.updateCallLinkRestrictions(sfuUrl: "sfu.example", authCredentialPresentation: [1, 2, 3], linkRootKey: Self.EXAMPLE_KEY, adminPasskey: CallLinkRootKey.generateAdminPasskey(), restrictions: .adminApproval)
+        switch result {
+        case .success(_):
+            // Don't bother checking anything here, since we are mocking the SFU's responses anyway.
+            break
+        case .failure(let code):
+            XCTFail("unexpected failure: \(code)")
+        }
     }
 
-
-    func testDeleteCallLinkSuccess() throws {
+    @MainActor
+    func testDeleteCallLinkSuccess() async throws {
         let delegate = TestDelegate()
         let httpClient = HTTPClient(delegate: delegate)
         let sfu = SFUClient(httpClient: httpClient)
 
-        let callbackCompleted = expectation(description: "callbackCompleted")
-        sfu.deleteCallLink(sfuUrl: "sfu.example", authCredentialPresentation: [1, 2, 3], linkRootKey: Self.EXAMPLE_KEY, adminPasskey: CallLinkRootKey.generateAdminPasskey())
-            .done { result in
-                switch result {
-                case .success(_):
-                    // Don't bother checking anything here, since we are mocking the SFU's responses anyway.
-                    break
-                case .failure(let code):
-                    XCTFail("unexpected failure: \(code)")
-                }
-                callbackCompleted.fulfill()
-            }
+        delegate.onSendRequest { id, request in
+            XCTAssert(request.url.starts(with: "sfu.example"))
+            XCTAssertEqual(request.method, .delete)
+            httpClient.receivedResponse(requestId: id, response: HTTPResponse(statusCode: 200, body: Self.EXAMPLE_EMPTY_JSON.data(using: .utf8)))
+        }
 
-        wait(for: [delegate.sentHttpRequestExpectation], timeout: 1.0)
-        XCTAssert(try XCTUnwrap(delegate.sentHttpRequestUrl).starts(with: "sfu.example"))
-        XCTAssertEqual(delegate.sentHttpRequestMethod, .delete)
-        let requestId = try XCTUnwrap(delegate.sentHttpRequestId)
-        httpClient.receivedResponse(requestId: requestId, response: HTTPResponse(statusCode: 200, body: Self.EXAMPLE_EMPTY_JSON.data(using: .utf8)))
-        waitForExpectations(timeout: 1.0)
+        let result = await sfu.deleteCallLink(sfuUrl: "sfu.example", authCredentialPresentation: [1, 2, 3], linkRootKey: Self.EXAMPLE_KEY, adminPasskey: CallLinkRootKey.generateAdminPasskey())
+        switch result {
+        case .success(_):
+            // Don't bother checking anything here, since we are mocking the SFU's responses anyway.
+            break
+        case .failure(let code):
+            XCTFail("unexpected failure: \(code)")
+        }
     }
 
-    func testPeekNoActiveCall() throws {
+    @MainActor
+    func testPeekNoActiveCall() async throws {
         let delegate = TestDelegate()
         let httpClient = HTTPClient(delegate: delegate)
         let sfu = SFUClient(httpClient: httpClient)
 
-        let callbackCompleted = expectation(description: "callbackCompleted")
-        sfu.peek(sfuUrl: "sfu.example", authCredentialPresentation: [1, 2, 3], linkRootKey: Self.EXAMPLE_KEY)
-            .done { result in
-                XCTAssertNil(result.errorStatusCode)
-                XCTAssertNil(result.peekInfo.eraId)
-                XCTAssertEqual(0, result.peekInfo.deviceCountIncludingPendingDevices)
-                XCTAssertEqual(0, result.peekInfo.deviceCountExcludingPendingDevices)
-                callbackCompleted.fulfill()
-            }
+        delegate.onSendRequest { id, request in
+            XCTAssert(request.url.starts(with: "sfu.example"))
+            XCTAssertEqual(request.method, .get)
+            httpClient.receivedResponse(requestId: id, response: HTTPResponse(statusCode: 404, body: Data()))
+        }
 
-        wait(for: [delegate.sentHttpRequestExpectation], timeout: 1.0)
-        XCTAssert(try XCTUnwrap(delegate.sentHttpRequestUrl).starts(with: "sfu.example"))
-        XCTAssertEqual(delegate.sentHttpRequestMethod, .get)
-        let requestId = try XCTUnwrap(delegate.sentHttpRequestId)
-        httpClient.receivedResponse(requestId: requestId, response: HTTPResponse(statusCode: 404, body: Data()))
-        waitForExpectations(timeout: 1.0)
+        let result = await sfu.peek(sfuUrl: "sfu.example", authCredentialPresentation: [1, 2, 3], linkRootKey: Self.EXAMPLE_KEY)
+        XCTAssertNil(result.errorStatusCode)
+        XCTAssertNil(result.peekInfo.eraId)
+        XCTAssertEqual(0, result.peekInfo.deviceCountIncludingPendingDevices)
+        XCTAssertEqual(0, result.peekInfo.deviceCountExcludingPendingDevices)
     }
 
-    func testPeekExpiredLink() throws {
+    @MainActor
+    func testPeekExpiredLink() async throws {
         let delegate = TestDelegate()
         let httpClient = HTTPClient(delegate: delegate)
         let sfu = SFUClient(httpClient: httpClient)
 
-        let callbackCompleted = expectation(description: "callbackCompleted")
-        sfu.peek(sfuUrl: "sfu.example", authCredentialPresentation: [1, 2, 3], linkRootKey: Self.EXAMPLE_KEY)
-            .done { result in
-                XCTAssertEqual(PeekInfo.expiredCallLinkStatus, result.errorStatusCode)
-                XCTAssertNil(result.peekInfo.eraId)
-                XCTAssertEqual(0, result.peekInfo.deviceCountIncludingPendingDevices)
-                XCTAssertEqual(0, result.peekInfo.deviceCountExcludingPendingDevices)
-                callbackCompleted.fulfill()
-            }
+        delegate.onSendRequest { id, request in
+            XCTAssert(request.url.starts(with: "sfu.example"))
+            XCTAssertEqual(request.method, .get)
+            httpClient.receivedResponse(requestId: id, response: HTTPResponse(statusCode: 404, body: #"{"reason":"expired"}"#.data(using: .utf8)))
+        }
 
-        wait(for: [delegate.sentHttpRequestExpectation], timeout: 1.0)
-        XCTAssert(try XCTUnwrap(delegate.sentHttpRequestUrl).starts(with: "sfu.example"))
-        XCTAssertEqual(delegate.sentHttpRequestMethod, .get)
-        let requestId = try XCTUnwrap(delegate.sentHttpRequestId)
-        httpClient.receivedResponse(requestId: requestId, response: HTTPResponse(statusCode: 404, body: #"{"reason":"expired"}"#.data(using: .utf8)))
-        waitForExpectations(timeout: 1.0)
+        let result = await sfu.peek(sfuUrl: "sfu.example", authCredentialPresentation: [1, 2, 3], linkRootKey: Self.EXAMPLE_KEY)
+        XCTAssertEqual(PeekInfo.expiredCallLinkStatus, result.errorStatusCode)
+        XCTAssertNil(result.peekInfo.eraId)
+        XCTAssertEqual(0, result.peekInfo.deviceCountIncludingPendingDevices)
+        XCTAssertEqual(0, result.peekInfo.deviceCountExcludingPendingDevices)
     }
 
-    func testPeekInvalidLink() throws {
+    @MainActor
+    func testPeekInvalidLink() async throws {
         let delegate = TestDelegate()
         let httpClient = HTTPClient(delegate: delegate)
         let sfu = SFUClient(httpClient: httpClient)
 
-        let callbackCompleted = expectation(description: "callbackCompleted")
-        sfu.peek(sfuUrl: "sfu.example", authCredentialPresentation: [1, 2, 3], linkRootKey: Self.EXAMPLE_KEY)
-            .done { result in
-                XCTAssertEqual(PeekInfo.invalidCallLinkStatus, result.errorStatusCode)
-                XCTAssertNil(result.peekInfo.eraId)
-                XCTAssertEqual(0, result.peekInfo.deviceCountIncludingPendingDevices)
-                XCTAssertEqual(0, result.peekInfo.deviceCountExcludingPendingDevices)
-                callbackCompleted.fulfill()
-            }
+        delegate.onSendRequest { id, request in
+            XCTAssert(request.url.starts(with: "sfu.example"))
+            XCTAssertEqual(request.method, .get)
+            httpClient.receivedResponse(requestId: id, response: HTTPResponse(statusCode: 404, body: #"{"reason":"invalid"}"#.data(using: .utf8)))
+        }
 
-        wait(for: [delegate.sentHttpRequestExpectation], timeout: 1.0)
-        XCTAssert(try XCTUnwrap(delegate.sentHttpRequestUrl).starts(with: "sfu.example"))
-        XCTAssertEqual(delegate.sentHttpRequestMethod, .get)
-        let requestId = try XCTUnwrap(delegate.sentHttpRequestId)
-        httpClient.receivedResponse(requestId: requestId, response: HTTPResponse(statusCode: 404, body: #"{"reason":"invalid"}"#.data(using: .utf8)))
-        waitForExpectations(timeout: 1.0)
+        let result = await sfu.peek(sfuUrl: "sfu.example", authCredentialPresentation: [1, 2, 3], linkRootKey: Self.EXAMPLE_KEY)
+        XCTAssertEqual(PeekInfo.invalidCallLinkStatus, result.errorStatusCode)
+        XCTAssertNil(result.peekInfo.eraId)
+        XCTAssertEqual(0, result.peekInfo.deviceCountIncludingPendingDevices)
+        XCTAssertEqual(0, result.peekInfo.deviceCountExcludingPendingDevices)
     }
 
+    @MainActor
     func testConnectWithNoResponse() throws {
         let delegate = TestDelegate()
         let callManager = createCallManager(delegate)!

@@ -6,7 +6,16 @@
 syntax = "proto2";
 
 package group_call;
- 
+
+// Header for an MRPStream
+message MRPHeader {
+  optional uint64 seqnum = 1;
+
+  optional uint64 ack_num = 2;
+
+  optional uint32 num_packets = 3;
+}
+
 message DeviceToDevice {
   // Sent over signaling
   message MediaKey {
@@ -80,10 +89,46 @@ message DeviceToSfu {
   }
 
   optional RaiseHand raise_hand = 7;
+
+  optional MRPHeader mrp_header = 8;
+
+  // Used to pass through DeviceToSfu messages that are too large for one frame
+  // Used in conjunction with MrpHeader::content_length where first packet has content_length
+  // and the rest of the packets only have content and MrpHeader specified. Reassembled
+  // on the receiver side
+  optional bytes content = 9;
 }
 
 message SfuToDevice {
+  message PeekInfo {
+    message PeekDeviceInfo {
+      optional fixed32 demux_id = 1;
+      optional string opaque_user_id = 2;
+    }
+
+    enum CallLinkRestrictions {
+      NONE = 0;
+      ADMIN_APPROVAL = 1;
+    }
+
+    message CallLinkState {
+      optional string encrypted_name = 1;
+      optional CallLinkRestrictions restrictions = 2;
+      optional bool revoked = 3;
+      optional uint64 expiration_unix_timestamp = 4;
+    }
+
+    optional string era_id = 1;
+    optional uint32 max_devices = 2;
+    optional string creator = 3;
+
+    repeated PeekDeviceInfo devices = 4;
+    repeated PeekDeviceInfo pending_devices = 5;
+    optional CallLinkState call_link_state = 6;
+  }
+
   message DeviceJoinedOrLeft {
+    optional PeekInfo peek_info = 1;
   }
  
   message Speaker {
@@ -129,4 +174,11 @@ message SfuToDevice {
   optional Stats stats                              = 8;
   optional Removed removed                          = 9;
   optional RaisedHands raised_hands                 = 10;
+  optional MRPHeader mrp_header                     = 11;
+
+  // Used to pass through SfuToDevice messages that are too large for one frame
+  // Used in conjunction with MrpHeader::content_length where first packet has content_length
+  // and the rest of the packets only have content and MrpHeader specified. Reassembled
+  // on the receiver side
+  optional bytes content = 12;
 }

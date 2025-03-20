@@ -35,11 +35,11 @@ impl Default for RffiPeerConnection {
     }
 }
 
-pub struct RffiIp(u32);
+pub struct RffiIp;
 
 impl From<std::net::IpAddr> for RffiIp {
     fn from(_ip: std::net::IpAddr) -> RffiIp {
-        RffiIp(0)
+        RffiIp
     }
 }
 
@@ -74,7 +74,7 @@ impl RffiPeerConnection {
 
     fn set_outgoing_media_enabled(&self, enabled: bool) {
         let mut state = self.state.lock().unwrap();
-        if !(state.local_description_set && state.remote_description_set) {
+        if enabled && !(state.local_description_set && state.remote_description_set) {
             panic!("Can't Rust_setOutgoingMediaEnabled if you haven't received an answer yet.");
         }
         state.outgoing_audio_enabled = enabled;
@@ -222,15 +222,6 @@ pub unsafe fn Rust_setAudioRecordingEnabled(
 }
 
 #[allow(non_snake_case, clippy::missing_safety_doc)]
-pub unsafe fn Rust_setIncomingAudioMuted(
-    _peer_connection: webrtc::ptr::BorrowedRc<RffiPeerConnection>,
-    _ssrc: u32,
-    _muted: bool,
-) {
-    info!("Rust_setIncomingAudioMuted:");
-}
-
-#[allow(non_snake_case, clippy::missing_safety_doc)]
 pub unsafe fn Rust_addIceCandidateFromSdp(
     _peer_connection: webrtc::ptr::BorrowedRc<RffiPeerConnection>,
     _sdp: webrtc::ptr::Borrowed<c_char>,
@@ -245,6 +236,7 @@ pub unsafe fn Rust_addIceCandidateFromServer(
     _ip: RffiIp,
     _port: u16,
     _tcp: bool,
+    _hostname: webrtc::ptr::Borrowed<c_char>,
 ) -> bool {
     info!("Rust_addIceCandidateFromServer():");
     true

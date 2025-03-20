@@ -1,5 +1,5 @@
-name: Build RingRTC AAR
-run-name: Build RingRTC AAR (${{ github.ref_name }})
+name: Build RingRTC Android Artifacts
+run-name: Build RingRTC Android Artifacts (${{ github.ref_name }})
 
 on:
   workflow_dispatch:
@@ -11,17 +11,17 @@ on:
         type: boolean
       runner:
         description: "Linux runner:"
-        default: 'ubuntu-latest-4-cores'
+        default: 'ubuntu-22.04-4-cores'
         required: true
         type: choice
         options:
-          - 'ubuntu-latest'
-          - 'ubuntu-latest-4-cores'
-          - 'ubuntu-latest-8-cores'
+          - 'ubuntu-22.04'
+          - 'ubuntu-22.04-4-cores'
+          - 'ubuntu-22.04-8-cores'
 
 env:
   CARGO_TERM_COLOR: always
-  NDK_VERSION: '25.2.9519653'
+  NDK_VERSION: '27.0.12077973'
 
 jobs:
   build_android:
@@ -31,6 +31,9 @@ jobs:
 
     steps:
     - uses: actions/checkout@v4
+
+    - name: Install NDK
+      run: echo "y" | ${ANDROID_SDK_ROOT}/cmdline-tools/latest/bin/sdkmanager --install "ndk;${{ env.NDK_VERSION }}"
 
     - run: rustup toolchain install $(cat rust-toolchain) --profile minimal --target aarch64-linux-android,armv7-linux-androideabi,x86_64-linux-android,i686-linux-android
 
