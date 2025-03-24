@@ -5,23 +5,30 @@
 
 //! WebRTC Simulation Peer Connection Interface
 
-use std::net::SocketAddr;
-use std::os::raw::c_char;
-use std::sync::{Arc, Mutex};
+use std::{
+    net::SocketAddr,
+    os::raw::c_char,
+    sync::{Arc, Mutex},
+};
 
 use prost::Message;
 
-use crate::core::platform::PlatformItem;
-use crate::webrtc;
-use crate::webrtc::media::RffiAudioEncoderConfig;
-use crate::webrtc::network::RffiIpPort;
-use crate::webrtc::peer_connection::{RffiAudioLevel, RffiReceivedAudioLevel};
-use crate::webrtc::rtp;
-use crate::webrtc::sdp_observer::{
-    RffiCreateSessionDescriptionObserver, RffiSessionDescription, RffiSetSessionDescriptionObserver,
+use crate::{
+    core::platform::PlatformItem,
+    webrtc,
+    webrtc::{
+        media::RffiAudioEncoderConfig,
+        network::RffiIpPort,
+        peer_connection::{RffiAudioLevel, RffiReceivedAudioLevel},
+        rtp,
+        sdp_observer::{
+            RffiCreateSessionDescriptionObserver, RffiSessionDescription,
+            RffiSetSessionDescriptionObserver,
+        },
+        sim::ice_gatherer::{RffiIceGatherer, FAKE_ICE_GATHERER},
+        stats_observer::RffiStatsObserver,
+    },
 };
-use crate::webrtc::sim::ice_gatherer::{RffiIceGatherer, FAKE_ICE_GATHERER};
-use crate::webrtc::stats_observer::RffiStatsObserver;
 
 /// Simulation type for PeerConnection.
 #[derive(Clone)]
@@ -35,11 +42,11 @@ impl Default for RffiPeerConnection {
     }
 }
 
-pub struct RffiIp(u32);
+pub struct RffiIp;
 
 impl From<std::net::IpAddr> for RffiIp {
     fn from(_ip: std::net::IpAddr) -> RffiIp {
-        RffiIp(0)
+        RffiIp
     }
 }
 
@@ -74,7 +81,7 @@ impl RffiPeerConnection {
 
     fn set_outgoing_media_enabled(&self, enabled: bool) {
         let mut state = self.state.lock().unwrap();
-        if !(state.local_description_set && state.remote_description_set) {
+        if enabled && !(state.local_description_set && state.remote_description_set) {
             panic!("Can't Rust_setOutgoingMediaEnabled if you haven't received an answer yet.");
         }
         state.outgoing_audio_enabled = enabled;
@@ -222,15 +229,6 @@ pub unsafe fn Rust_setAudioRecordingEnabled(
 }
 
 #[allow(non_snake_case, clippy::missing_safety_doc)]
-pub unsafe fn Rust_setIncomingAudioMuted(
-    _peer_connection: webrtc::ptr::BorrowedRc<RffiPeerConnection>,
-    _ssrc: u32,
-    _muted: bool,
-) {
-    info!("Rust_setIncomingAudioMuted:");
-}
-
-#[allow(non_snake_case, clippy::missing_safety_doc)]
 pub unsafe fn Rust_addIceCandidateFromSdp(
     _peer_connection: webrtc::ptr::BorrowedRc<RffiPeerConnection>,
     _sdp: webrtc::ptr::Borrowed<c_char>,
@@ -245,6 +243,7 @@ pub unsafe fn Rust_addIceCandidateFromServer(
     _ip: RffiIp,
     _port: u16,
     _tcp: bool,
+    _hostname: webrtc::ptr::Borrowed<c_char>,
 ) -> bool {
     info!("Rust_addIceCandidateFromServer():");
     true

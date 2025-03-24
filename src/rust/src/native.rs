@@ -3,28 +3,30 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //
 
-use std::collections::HashSet;
-use std::fmt;
-use std::time::Duration;
+use std::{collections::HashSet, fmt, time::Duration};
 
-use crate::common::{
-    ApplicationEvent, CallConfig, CallDirection, CallId, CallMediaType, DeviceId, Result,
+use crate::{
+    common::{
+        ApplicationEvent, CallConfig, CallDirection, CallId, CallMediaType, DeviceId, Result,
+    },
+    core::{
+        call::Call,
+        connection::{Connection, ConnectionType},
+        group_call,
+        platform::{Platform, PlatformItem},
+        signaling,
+    },
+    lite::{
+        sfu,
+        sfu::{DemuxId, PeekInfo, PeekResult, UserId},
+    },
+    webrtc::{
+        media::{AudioTrack, MediaStream, VideoSink, VideoTrack},
+        peer_connection::{AudioLevel, ReceivedAudioLevel},
+        peer_connection_factory::{IceServer, PeerConnectionFactory, RffiPeerConnectionKind},
+        peer_connection_observer::{NetworkRoute, PeerConnectionObserver},
+    },
 };
-use crate::core::call::Call;
-use crate::core::connection::{Connection, ConnectionType};
-use crate::core::platform::{Platform, PlatformItem};
-use crate::core::{group_call, signaling};
-use crate::lite::{
-    sfu,
-    sfu::{DemuxId, PeekInfo, PeekResult, UserId},
-};
-use crate::webrtc::media::MediaStream;
-use crate::webrtc::media::{AudioTrack, VideoSink, VideoTrack};
-use crate::webrtc::peer_connection::{AudioLevel, ReceivedAudioLevel};
-use crate::webrtc::peer_connection_factory::{
-    IceServer, PeerConnectionFactory, RffiPeerConnectionKind,
-};
-use crate::webrtc::peer_connection_observer::{NetworkRoute, PeerConnectionObserver};
 
 // This serves as the Platform::AppCallContext
 // Users of the native platform must provide these things
@@ -117,6 +119,7 @@ pub trait CallStateHandler {
         call_id: CallId,
         state: CallState,
     ) -> Result<()>;
+    fn handle_remote_audio_state(&self, remote_peer_id: &str, enabled: bool) -> Result<()>;
     fn handle_remote_video_state(&self, remote_peer_id: &str, enabled: bool) -> Result<()>;
     fn handle_remote_sharing_screen(&self, remote_peer_id: &str, enabled: bool) -> Result<()>;
     fn handle_network_route(&self, remote_peer_id: &str, network_route: NetworkRoute)
@@ -252,6 +255,10 @@ pub enum GroupUpdate {
     },
     Reactions(group_call::ClientId, Vec<group_call::Reaction>),
     RaisedHands(group_call::ClientId, Vec<DemuxId>),
+    RtcStatsReportComplete {
+        report_json: String,
+    },
+    SpeechEvent(group_call::ClientId, group_call::SpeechEvent),
 }
 
 impl fmt::Display for GroupUpdate {
@@ -280,6 +287,10 @@ impl fmt::Display for GroupUpdate {
             }
             GroupUpdate::RaisedHands(_, raised_hands) => {
                 format!("RaisedHands({:?})", raised_hands)
+            }
+            GroupUpdate::RtcStatsReportComplete { .. } => "RtcStatsReportComplete".to_string(),
+            GroupUpdate::SpeechEvent(_, event) => {
+                format!("SpeechEvent({:?}", event)
             }
         };
         write!(f, "({})", display)
@@ -353,6 +364,11 @@ impl NativePlatform {
 
     fn send_group_update(&self, update: GroupUpdate) -> Result<()> {
         self.group_handler.handle_group_update(update)
+    }
+
+    fn send_remote_audio_state(&self, peer_id: &str, enabled: bool) -> Result<()> {
+        self.state_handler
+            .handle_remote_audio_state(peer_id, enabled)
     }
 
     fn send_remote_video_state(&self, peer_id: &str, enabled: bool) -> Result<()> {
@@ -498,8 +514,8 @@ impl Platform for NativePlatform {
             remote_peer,
             call_id,
             match direction {
-                CallDirection::OutGoing => CallState::Outgoing(call_media_type),
-                CallDirection::InComing => CallState::Incoming(call_media_type),
+                CallDirection::Outgoing => CallState::Outgoing(call_media_type),
+                CallDirection::Incoming => CallState::Incoming(call_media_type),
             },
         )?;
         Ok(())
@@ -607,6 +623,10 @@ impl Platform for NativePlatform {
                 call_id,
                 CallState::Ended(EndReason::BusyOnAnotherDevice),
             ),
+            ApplicationEvent::RemoteAudioEnable => self.send_remote_audio_state(remote_peer, true),
+            ApplicationEvent::RemoteAudioDisable => {
+                self.send_remote_audio_state(remote_peer, false)
+            }
             ApplicationEvent::RemoteVideoEnable => self.send_remote_video_state(remote_peer, true),
             ApplicationEvent::RemoteVideoDisable => {
                 self.send_remote_video_state(remote_peer, false)
@@ -871,6 +891,21 @@ impl Platform for NativePlatform {
         }
     }
 
+    fn handle_speaking_notification(
+        &self,
+        client_id: group_call::ClientId,
+        event: group_call::SpeechEvent,
+    ) {
+        info!(
+            "NativePlatform::handle_speaking_notification(): {:?}",
+            event
+        );
+        let result = self.send_group_update(GroupUpdate::SpeechEvent(client_id, event));
+        if result.is_err() {
+            error!("{:?}", result.err());
+        }
+    }
+
     fn handle_audio_levels(
         &self,
         client_id: group_call::ClientId,
@@ -985,6 +1020,14 @@ impl Platform for NativePlatform {
             client_id,
             peek_info: peek_info.clone(),
         });
+        if result.is_err() {
+            error!("{:?}", result.err());
+        }
+    }
+
+    fn handle_rtc_stats_report(&self, report_json: String) {
+        debug!("NativePlatform::handle_rtc_stats_report");
+        let result = self.send_group_update(GroupUpdate::RtcStatsReportComplete { report_json });
         if result.is_err() {
             error!("{:?}", result.err());
         }

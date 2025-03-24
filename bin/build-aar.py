@@ -36,8 +36,8 @@ JAR_FILES = [
 ]
 WEBRTC_SO_LIBS = ['libringrtc_rffi.so']
 SO_LIBS = WEBRTC_SO_LIBS + ['libringrtc.so']
-# Android NDK used in webrtc/src/third_party/android_toolchain/.../ndk-version.h
-NDK_REVISION = '25.2.9519653'
+# Android NDK used in webrtc/src/third_party/android_toolchain/README.chromium
+NDK_REVISION = '27.0.12077973'
 
 
 class Project(enum.Flag):
@@ -140,7 +140,8 @@ def ParseArgs():
                         help='Dry Run: print what would happen, but do not actually do anything')
     parser.add_argument('-u', '--unstripped',
                         action='store_true',
-                        help='Store the unstripped libraries in the .aar. Default is false')
+                        default=True,
+                        help='Store the unstripped libraries in the .aar. Default is true')
     parser.add_argument('-c', '--compile-only', dest='disabled_projects',
                         action='append_const', const=Project.AAR,
                         help='Only compile the code, do not build the .aar. Default is false')
@@ -214,7 +215,6 @@ def BuildArch(dry_run, project_dir, webrtc_src_dir, build_dir, arch, debug_build
             'rtc_enable_protobuf': 'false',
             'rtc_enable_sctp': 'false',
             'rtc_libvpx_build_vp9': 'false',
-            'rtc_include_ilbc': 'false',
             'rtc_disable_metrics': 'true',
             'rtc_disable_trace_events': 'true',
         }
@@ -252,7 +252,7 @@ def BuildArch(dry_run, project_dir, webrtc_src_dir, build_dir, arch, debug_build
 
         cargo_target = GetCargoTarget(arch)
         # Set the linker as an environment variable, so it's available to dependencies as well.
-        linker = '{}/bin/{}{}-clang'.format(ndk_toolchain_dir, GetClangTarget(arch), GetAndroidApiLevel(arch))
+        linker = '{}/bin/{}21-clang'.format(ndk_toolchain_dir, GetClangTarget(arch))
         os.environ['CARGO_TARGET_{}_LINKER'.format(cargo_target.replace('-', '_').upper())] = linker
 
         cargo_args = [
@@ -325,13 +325,6 @@ def GetClangTarget(arch):
         return 'armv7a-linux-androideabi'
     else:
         return GetCargoTarget(arch)
-
-
-def GetAndroidApiLevel(arch):
-    if arch == 'arm' or arch == 'x86':
-        return 19
-    else:
-        return 21
 
 
 def CollectWebrtcLicenses(dry_run, project_dir, webrtc_src_dir, build_dir, debug_build, archs):

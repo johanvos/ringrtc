@@ -38,6 +38,8 @@ public final class GroupCall {
         CALL_LINK;
     }
 
+             public  static final int    INVALID_CLIENT_ID = 0;
+
     @NonNull private static final String TAG = GroupCall.class.getSimpleName();
 
     @NonNull  private Kind                               kind;
@@ -76,7 +78,7 @@ public final class GroupCall {
         this.nativeCallManager = nativeCallManager;
         this.factory = factory;
         this.observer = observer;
-        this.clientId = 0;
+        this.clientId = INVALID_CLIENT_ID;
 
         this.handleEndedCalled = false;
         this.disconnectCalled = false;
@@ -148,8 +150,7 @@ public final class GroupCall {
                 call.outgoingAudioTrack.getNativeAudioTrack(),
                 // Returns a borrowed RC.
                 call.outgoingVideoTrack.getNativeVideoTrack());
-
-            if (call.clientId == 0) {
+            if (call.clientId == INVALID_CLIENT_ID) {
                 call.dispose();
                 return null;
             }
@@ -195,8 +196,7 @@ public final class GroupCall {
                 call.outgoingAudioTrack.getNativeAudioTrack(),
                 // Returns a borrowed RC.
                 call.outgoingVideoTrack.getNativeVideoTrack());
-
-            if (call.clientId == 0) {
+            if (call.clientId == INVALID_CLIENT_ID) {
                 call.dispose();
                 return null;
             }
@@ -216,9 +216,9 @@ public final class GroupCall {
     {
         Log.i(TAG, "dispose():");
 
-        if (this.clientId != 0) {
+        if (this.clientId != INVALID_CLIENT_ID) {
             ringrtcDeleteGroupCallClient(nativeCallManager, this.clientId);
-            this.clientId = 0;
+            this.clientId = INVALID_CLIENT_ID;
         }
 
         if (this.outgoingAudioTrack != null) {
@@ -712,6 +712,18 @@ public final class GroupCall {
 
     /**
      *
+     * Callback from RingRTC with details about a speech event.
+     * @param event The speech event.
+     *
+     */
+    void handleSpeakingNotification(SpeechEvent event) {
+        Log.i(TAG, "handleSpeakingNotification():");
+
+        this.observer.onSpeakingNotification(this, event);
+    }
+
+    /**
+     *
      * Callback from RingRTC with details about audio levels.
      *
      */
@@ -887,6 +899,20 @@ public final class GroupCall {
             return values()[nativeIndex];
         }
     }
+
+    /**
+     * Enumeration of the type of speech durations we notify the client for.
+     */
+    public enum SpeechEvent {
+        /** The user was speaking, and is not anymore. */
+        STOPPED_SPEAKING,
+        /** The user has been speaking for long enough that they may want to lower their hand. */
+        LOWER_HAND_SUGGESTION;
+
+        @CalledByNative
+        static SpeechEvent fromNativeIndex(int nativeIndex) { return values()[nativeIndex]; }
+    }
+
 
     /**
      * A set of reasons why the group call has ended.
@@ -1203,6 +1229,11 @@ public final class GroupCall {
          * Notification that the local device state has changed.
          */
         void onLocalDeviceStateChanged(GroupCall groupCall);
+
+        /**
+         * Notification that speech state has changed.
+         */
+        void onSpeakingNotification(GroupCall groupCall, SpeechEvent event);
 
         /**
          * Notification of audio levels.

@@ -22,6 +22,7 @@ import {
   OfferType,
   PeekStatusCodes,
   Reaction,
+  SpeechEvent,
   RingRTC,
   callIdFromEra,
   callIdFromRingId,
@@ -95,17 +96,16 @@ describe('RingRTC', () => {
           resolve({ reason, ageSec });
         };
         /* eslint-enable @typescript-eslint/no-shadow */
-        RingRTC.handleCallingMessage(
-          'remote',
-          null,
-          4,
-          2,
-          age,
-          1,
-          offer,
-          Buffer.from([]),
-          Buffer.from([])
-        );
+        RingRTC.handleCallingMessage(offer, {
+          remoteUserId: 'remote',
+          remoteDeviceId: 4,
+          localDeviceId: 2,
+          ageSec: age,
+          receivedAtCounter: 1,
+          receivedAtDate: 100,
+          senderIdentityKey: Buffer.from([]),
+          receiverIdentityKey: Buffer.from([]),
+        });
       });
       assert.equal(reason, CallEndedReason.ReceivedOfferExpired);
       assert.equal(reportedAge, age);
@@ -137,17 +137,16 @@ describe('RingRTC', () => {
           resolve({ reason, ageSec });
         };
         /* eslint-enable @typescript-eslint/no-shadow */
-        RingRTC.handleCallingMessage(
-          'remote',
-          null,
-          4,
-          2,
-          10,
-          2,
-          offer,
-          Buffer.from([]),
-          Buffer.from([])
-        );
+        RingRTC.handleCallingMessage(offer, {
+          remoteUserId: 'remote',
+          remoteDeviceId: 4,
+          localDeviceId: 2,
+          ageSec: 10,
+          receivedAtCounter: 2,
+          receivedAtDate: 200,
+          senderIdentityKey: Buffer.from([]),
+          receiverIdentityKey: Buffer.from([]),
+        });
       });
       assert.equal(reason, CallEndedReason.Declined); // because we didn't set handleIncomingCall.
       assert.equal(reportedAge, 0);
@@ -201,22 +200,20 @@ describe('RingRTC', () => {
     initializeSpies();
 
     // Generate incoming calling message
-    const message_age_sec = 1;
-    const message_received_at_counter = 10;
     const callId = new Long(1, 1, true);
     const offerCallingMessage = generateOfferCallingMessage(callId);
 
-    RingRTC.handleCallingMessage(
-      user2_id,
-      Buffer.from(uuidToBytes(user2_id)),
-      user2_device_id,
-      user1_device_id,
-      message_age_sec,
-      message_received_at_counter,
-      offerCallingMessage,
-      user2_identity_key,
-      user1_identity_key
-    );
+    RingRTC.handleCallingMessage(offerCallingMessage, {
+      remoteUserId: user2_id,
+      remoteUuid: Buffer.from(uuidToBytes(user2_id)),
+      remoteDeviceId: user2_device_id,
+      localDeviceId: user1_device_id,
+      ageSec: 1,
+      receivedAtCounter: 10,
+      receivedAtDate: 1000,
+      senderIdentityKey: user2_identity_key,
+      receiverIdentityKey: user1_identity_key,
+    });
 
     await sleep(1000);
     handleIncomingCallSpy.should.have.been.calledOnce;
@@ -267,11 +264,11 @@ describe('RingRTC', () => {
   async function runGlareScenario(
     calling: CallingClass,
     outgoingWinner: boolean,
-    delayIncomingCallSetings: number,
-    delayOutgoingCallSetings: number
+    delayIncomingCallSettings: number,
+    delayOutgoingCallSettings: number
   ) {
-    calling.delayOutgoingCallSettingsRequest = delayOutgoingCallSetings;
-    calling.delayIncomingCallSettingsRequest = delayIncomingCallSetings;
+    calling.delayOutgoingCallSettingsRequest = delayOutgoingCallSettings;
+    calling.delayIncomingCallSettingsRequest = delayIncomingCallSettings;
 
     const outgoingCallLatch = countDownLatch(1);
     calling
@@ -302,22 +299,20 @@ describe('RingRTC', () => {
         );
 
     // Generate incoming calling message
-    const message_age_sec = 1;
-    const message_received_at_counter = 10;
     const offerCallingMessage = generateOfferCallingMessage(incomingCallId);
 
     // Initiate an incoming call
-    RingRTC.handleCallingMessage(
-      user2_id,
-      Buffer.from(uuidToBytes(user2_id)),
-      user2_device_id,
-      user1_device_id,
-      message_age_sec,
-      message_received_at_counter,
-      offerCallingMessage,
-      user2_identity_key,
-      user1_identity_key
-    );
+    RingRTC.handleCallingMessage(offerCallingMessage, {
+      remoteUserId: user2_id,
+      remoteUuid: Buffer.from(uuidToBytes(user2_id)),
+      remoteDeviceId: user2_device_id,
+      localDeviceId: user1_device_id,
+      ageSec: 1,
+      receivedAtCounter: 10,
+      receivedAtDate: 1000,
+      senderIdentityKey: user2_identity_key,
+      receiverIdentityKey: user1_identity_key,
+    });
 
     await sleep(1000);
 
@@ -485,7 +480,8 @@ describe('RingRTC', () => {
         Buffer.of(1, 2, 3),
         EXAMPLE_KEY,
         CallLinkRootKey.generateAdminPassKey(),
-        Buffer.of(4, 5, 6)
+        Buffer.of(4, 5, 6),
+        CallLinkRestrictions.None
       );
       const requestId = await requestIdPromise;
       RingRTC.receivedHttpResponse(
@@ -527,7 +523,8 @@ describe('RingRTC', () => {
         Buffer.of(1, 2, 3),
         EXAMPLE_KEY,
         CallLinkRootKey.generateAdminPassKey(),
-        Buffer.of(4, 5, 6)
+        Buffer.of(4, 5, 6),
+        CallLinkRestrictions.None
       );
       const requestId = await requestIdPromise;
       RingRTC.receivedHttpResponse(requestId, 403, Buffer.of());
@@ -911,6 +908,7 @@ describe('RingRTC', () => {
       onRaisedHands(_call: GroupCall, _raisedHands: Array<number>) {}
       onPeekChanged(_call: GroupCall) {}
       onEnded(_call: GroupCall, _reason: GroupCallEndReason) {}
+      onSpeechEvent(_call: GroupCall, _event: SpeechEvent) {}
       /* eslint-enable @typescript-eslint/no-empty-function */
     }
 

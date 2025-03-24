@@ -3,45 +3,46 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //
 
-use anyhow::anyhow;
-use bitvec::{
-    bits,
-    prelude::{BitSlice, LocalBits, Lsb0},
+mod direct_call_sim;
+mod group_call_sim;
+
+use std::{
+    collections::{HashMap, HashSet},
+    sync::mpsc::Sender,
+    time::{Duration, Instant},
 };
+
+use direct_call_sim::DirectCall;
+use group_call_sim::GroupCall;
 use log::*;
 use ringrtc::{
     common::{
         actor::{Actor, Stopper},
         CallConfig, CallId, CallMediaType, DeviceId, Result,
     },
-    core::{call_manager::CallManager, group_call, signaling},
-    lite::{http, sfu::UserId},
-    native::{
-        CallState, CallStateHandler, GroupUpdate, GroupUpdateHandler, NativeCallContext,
-        NativePlatform, PeerId, SignalingSender,
+    core::{
+        call_manager::CallManager,
+        group_call::{self, GroupId},
+        signaling,
+        util::uuid_to_string,
     },
+    lite::{
+        http::{self, sim::HttpClient, Client},
+        sfu::{GroupMember, UserId},
+    },
+    native::{NativeCallContext, NativePlatform, PeerId, SignalingSender},
     webrtc::{
-        injectable_network,
-        injectable_network::InjectableNetwork,
-        media::{VideoSink, VideoSource},
-        network::NetworkInterfaceType,
-        peer_connection::AudioLevel,
-        peer_connection_factory::{IceServer, PeerConnectionFactory},
-        peer_connection_observer::NetworkRoute,
+        media::{AudioTrack, VideoSink, VideoSource, VideoTrack},
+        peer_connection_factory::{AudioConfig, IceServer, PeerConnectionFactory},
     },
 };
-use std::{
-    collections::HashSet,
-    io,
-    iter::{Cycle, StepBy},
-    net::{SocketAddr, UdpSocket},
-    sync::mpsc::Sender,
-    thread,
-    time::Duration,
+
+use crate::{
+    network::DeterministicLossNetwork,
+    relay::SignalingRelay,
+    util,
+    video::{LoggingVideoSink, VideoInput},
 };
-
-use crate::{server::Server, video::LoggingVideoSink, video::VideoInput};
-
 /// Used to optionally sync operations with the user layer.
 #[derive(Default)]
 pub struct EventSync {
@@ -56,8 +57,11 @@ pub struct EventSync {
 pub struct CallEndpoint {
     // We keep a copy of these outside of the actor state
     // so we can know them in any thread.
-    pub peer_id: PeerId,
+    pub name: String,
     pub device_id: DeviceId,
+    // Our uuid that we can identify ourselves with to the SFU
+    // and so our group_call_messages are properly identified
+    pub user_id: Option<UserId>,
     // There is probably a way to have a CallEndpoint without a thread,
     // but this is the easiest way to get around the nasty dependency cycle
     // of CallEndpoint -> CallManger -> NativePlatform -> CallEndpoint.
@@ -66,223 +70,218 @@ pub struct CallEndpoint {
 }
 
 struct CallEndpointState {
-    peer_id: PeerId,
     device_id: DeviceId,
-    call_config: CallConfig,
 
     // How we send and receive signaling
-    signaling_server: Box<dyn Server + Send + 'static>,
+    signaling_server: Box<dyn SignalingRelay + Send + 'static>,
     // How we control calls
     call_manager: CallManager<NativePlatform>,
-    call_context: NativeCallContext,
     // Events that can be used to signal the user layer (for latches there).
     event_sync: EventSync,
 
     // Keep a copy around to be able to schedule video frames
     actor: Actor<Self>,
-    // Keep a copy around to be able to push out video frames
-    outgoing_video_source: VideoSource,
 
-    network: Option<InjectableNetwork>,
-    socket: Option<UdpSocket>,
+    // Media related fields
+    outgoing_video_source: VideoSource,
+    outgoing_video_track: VideoTrack,
+    outgoing_audio_track: AudioTrack,
+    incoming_video_sink: Box<dyn VideoSink>,
+
+    // connection related resources
+    peer_connection_factory: PeerConnectionFactory,
+    delegate_http_client: HttpClient,
+    network: Option<DeterministicLossNetwork>,
+
+    direct_call: Option<DirectCall>,
+    group_call: Option<GroupCall>,
+    // How we look up members of a group
+    group_directory: HashMap<GroupId, Vec<GroupMember>>,
 }
 
 #[allow(clippy::too_many_arguments)]
 impl CallEndpoint {
-    pub fn start(
-        peer_id: &str,
+    pub fn new(
+        name: &str,
         device_id: DeviceId,
-        call_config: CallConfig,
-        hide_ip: bool,
-        ice_server: &IceServer,
-        signaling_server: Box<dyn Server + Send + 'static>,
+        user_id: Option<UserId>,
+        audio_config: &AudioConfig,
+        signaling_server: Box<dyn SignalingRelay + Send + 'static>,
         stopper: &Stopper,
         event_sync: EventSync,
         incoming_video_sink: Option<Box<dyn VideoSink>>,
         use_injectable_network: bool,
     ) -> Result<Self> {
-        let peer_id = PeerId::from(peer_id);
-
-        // To send across threads
-        let ice_servers = vec![ice_server.clone()];
+        let audio_config = audio_config.clone();
+        let name = name.to_owned();
 
         Ok(Self::from_actor(
-            peer_id.clone(),
+            name.clone(),
             device_id,
-            Actor::start(
-                format!("endpoint-{peer_id}"),
-                stopper.clone(),
-                move |actor| {
-                    // Constructing this is a funny way of getting a clone of the CallEndpoint
-                    // on the actor's thread so we can have it in the actor's state so we can
-                    // pass it to the NativePlatform/CallManager.
-                    // This is a little weird, but it seems nicer than doing some kind of
-                    // Option<CallManager> thing that we have to set later.
-                    let endpoint = Self::from_actor(peer_id.clone(), device_id, actor.clone());
+            user_id.clone(),
+            Actor::start(format!("endpoint-{name}"), stopper.clone(), move |actor| {
+                // Constructing this is a funny way of getting a clone of the CallEndpoint
+                // on the actor's thread so we can have it in the actor's state so we can
+                // pass it to the NativePlatform/CallManager.
+                // This is a little weird, but it seems nicer than doing some kind of
+                // Option<CallManager> thing that we have to set later.
+                let endpoint =
+                    Self::from_actor(name.clone(), device_id, user_id.clone(), actor.clone());
 
-                    let mut pcf = PeerConnectionFactory::new(
-                        &call_config.audio_config,
-                        use_injectable_network,
-                    )?;
-                    info!(
-                        "Audio playout devices: {:?}",
-                        pcf.get_audio_playout_devices()
-                    );
-                    info!(
-                        "Audio recording devices: {:?}",
-                        pcf.get_audio_recording_devices()
-                    );
+                let mut peer_connection_factory =
+                    PeerConnectionFactory::new(&audio_config, use_injectable_network)?;
+                info!(
+                    "Audio playout devices: {:?}",
+                    peer_connection_factory.get_audio_playout_devices()
+                );
+                info!(
+                    "Audio recording devices: {:?}",
+                    peer_connection_factory.get_audio_recording_devices()
+                );
 
-                    // Set up signaling/state
-                    signaling_server.register(&endpoint);
-                    let signaling_sender = Box::new(endpoint.clone());
-                    let should_assume_messages_sent = true; // cli doesn't support async sending yet.
-                    let state_handler = Box::new(endpoint.clone());
+                // Set up signaling/state
+                signaling_server.register(&endpoint);
+                let signaling_sender = Box::new(endpoint.clone());
+                let should_assume_messages_sent = true; // cli doesn't support async sending yet.
+                let state_handler = Box::new(endpoint.clone());
 
-                    // Fill in fake group call things
-                    let http_client = http::DelegatingClient::new(endpoint.clone());
-                    let group_handler = Box::new(endpoint);
+                // Fill in group call things
+                let delegate_http_client = HttpClient::start();
+                let http_client = http::DelegatingClient::new(endpoint.clone());
+                let group_handler = Box::new(endpoint);
 
-                    let platform = NativePlatform::new(
-                        pcf.clone(),
-                        signaling_sender,
-                        should_assume_messages_sent,
-                        state_handler,
-                        group_handler,
-                    );
-                    let call_manager = CallManager::new(platform, http_client)?;
+                let platform = NativePlatform::new(
+                    peer_connection_factory.clone(),
+                    signaling_sender,
+                    should_assume_messages_sent,
+                    state_handler,
+                    group_handler,
+                );
+                let call_manager = CallManager::new(platform, http_client)?;
 
-                    // And a CallContext.  We'll use the same context for each call.
-                    let outgoing_audio_track = pcf.create_outgoing_audio_track()?;
-                    let outgoing_video_source = pcf.create_outgoing_video_source()?;
-                    let outgoing_video_track =
-                        pcf.create_outgoing_video_track(&outgoing_video_source)?;
-                    let call_context = NativeCallContext::new(
-                        hide_ip,
-                        ice_servers,
-                        outgoing_audio_track,
-                        outgoing_video_track,
-                        incoming_video_sink.unwrap_or_else(|| {
-                            Box::new(LoggingVideoSink {
-                                peer_id: peer_id.clone(),
-                            })
-                        }),
-                    );
-
-                    let network = if use_injectable_network {
-                        Some(pcf.injectable_network().expect("get Injectable Network"))
-                    } else {
-                        None
-                    };
-
-                    Ok(CallEndpointState {
-                        peer_id,
-                        device_id,
-                        call_config,
-
-                        signaling_server,
-                        call_manager,
-                        call_context,
-                        event_sync,
-
-                        actor,
-                        outgoing_video_source,
-
-                        network,
-                        socket: None,
+                // Initialize media. We'll use the same for each call.
+                let outgoing_audio_track = peer_connection_factory.create_outgoing_audio_track()?;
+                let outgoing_video_source =
+                    peer_connection_factory.create_outgoing_video_source()?;
+                let outgoing_video_track =
+                    peer_connection_factory.create_outgoing_video_track(&outgoing_video_source)?;
+                let incoming_video_sink = incoming_video_sink.unwrap_or_else(|| {
+                    Box::new(LoggingVideoSink {
+                        peer_id: name.clone(),
                     })
-                },
-            )?,
+                });
+
+                let network = if use_injectable_network {
+                    Some(DeterministicLossNetwork::new(
+                        peer_connection_factory
+                            .injectable_network()
+                            .expect("get Injectable Network"),
+                    ))
+                } else {
+                    None
+                };
+
+                Ok(CallEndpointState {
+                    device_id,
+
+                    signaling_server,
+                    call_manager,
+                    event_sync,
+
+                    actor,
+
+                    outgoing_video_source,
+                    outgoing_video_track,
+                    outgoing_audio_track,
+                    incoming_video_sink,
+
+                    peer_connection_factory,
+                    delegate_http_client,
+                    network,
+
+                    direct_call: None,
+                    group_call: None,
+                    group_directory: HashMap::new(),
+                })
+            })?,
         ))
     }
 
-    fn from_actor(peer_id: PeerId, device_id: DeviceId, actor: Actor<CallEndpointState>) -> Self {
+    fn from_actor(
+        name: String,
+        device_id: DeviceId,
+        user_id: Option<UserId>,
+        actor: Actor<CallEndpointState>,
+    ) -> Self {
         Self {
-            peer_id,
+            name: name.to_string(),
             device_id,
+            user_id,
             actor,
         }
     }
 
-    pub fn add_deterministic_loss_network(&self, ip: &str, loss_rate: u8, packet_size_ms: i32) {
-        let ip = ip.parse().expect("parse IP address");
+    pub fn peer_id(&self) -> PeerId {
+        self.user_id
+            .as_ref()
+            .map_or(self.name.to_string(), |id| uuid_to_string(id))
+    }
 
-        let mut deterministic_loss = DeterministicLoss::new(loss_rate, packet_size_ms, 10)
-            .expect("parameters should be valid");
+    /// append device number so relay broadcast goes to user's other devices
+    pub fn relay_id(&self) -> String {
+        format!("{}:{}", self.peer_id(), self.device_id)
+    }
+
+    /// Initializes state used in direct calls
+    pub fn init_direct_settings(
+        &mut self,
+        hide_ip: bool,
+        ice_server: &IceServer,
+        call_config: CallConfig,
+    ) {
+        // To send across threads
+        let ice_servers = vec![ice_server.clone()];
 
         self.actor.send(move |state| {
-            if state.network.is_none() {
+            let call_context = NativeCallContext::new(
+                hide_ip,
+                ice_servers,
+                state.outgoing_audio_track.clone(),
+                state.outgoing_video_track.clone(),
+                state.incoming_video_sink.clone(),
+            );
+
+            state.direct_call = Some(DirectCall::new(call_context, call_config));
+        });
+    }
+
+    /// Initializes state used in group calls
+    pub fn init_group_settings(&mut self, group_directory: HashMap<GroupId, Vec<GroupMember>>) {
+        self.actor.send(move |state| {
+            state.group_directory = group_directory;
+        });
+    }
+
+    pub fn add_deterministic_loss_network(&self, ip: &str, loss_rate: u8, packet_size_ms: i32) {
+        let ip = ip.to_owned();
+        self.actor.send(move |state| {
+            if let Some(ref mut network) = state.network {
+                network.add_deterministic_loss(ip, loss_rate, packet_size_ms);
+            } else {
                 error!("Error: Injectable network not set properly!");
-                return;
             }
-            let network = state.network.clone().unwrap();
-
-            // The injectable network currently makes an assumption that socket ports will
-            // start from 2001. We also make that assumption, and we are only going to give
-            // one interface and no external servers for deterministic loss testing, so only
-            // one ip/port should end up being used by each client for these tests.
-            let local_socket_addr = SocketAddr::new(ip, 2001);
-            let socket = UdpSocket::bind(local_socket_addr).expect("bind to address");
-            let socket_as_sender = socket.try_clone().expect("clone the socket");
-            // Connect the Injectable Network's send function to the UdpSocket.
-            network.set_sender(Box::new(move |packet: injectable_network::Packet| {
-                if let Err(err) = socket_as_sender.send_to(&packet.data, packet.dest) {
-                    error!("Error: Sending packet to {}: {}", packet.dest, err);
-                }
-            }));
-
-            // Adding it to the network causes the PeerConnections to learn about it through
-            // the NetworkMonitor. For our tests, we just assume "wifi" for simplicity.
-            network.add_interface("wifi", NetworkInterfaceType::Wifi, ip, 1);
-
-            let socket_as_receiver = socket.try_clone().expect("clone the socket");
-            state.socket = Some(socket);
-
-            // Spawn a thread to maintain a receive loop on the socket. This waits for incoming
-            // UDP packets until the network is stopped and the socket is set to non-blocking
-            // mode. Then it will exit the loop and thread on a "Would Block" error.
-            thread::spawn(move || {
-                // 2K should be enough for any UDP packet.
-                let mut buf = [0; 2048];
-                loop {
-                    match socket_as_receiver.recv_from(&mut buf) {
-                        Ok((number_of_bytes, src_addr)) => {
-                            if number_of_bytes > 1200 {
-                                warn!(
-                                    "Warning: {} bytes received for one packet!",
-                                    number_of_bytes
-                                );
-                            }
-
-                            if !deterministic_loss.next_is_loss() {
-                                network.receive_udp(injectable_network::Packet {
-                                    source: src_addr,
-                                    dest: local_socket_addr,
-                                    data: buf[..number_of_bytes].to_vec(),
-                                });
-                            }
-                        }
-                        Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
-                            break;
-                        }
-                        Err(err) => panic!("recv_from failed: {err}"),
-                    }
-                }
-            });
         });
     }
 
     pub fn stop_network(&self) {
         self.actor.send(move |state| {
-            if let Some(socket) = &state.socket {
-                socket
-                    .set_nonblocking(true)
-                    .expect("set socket to non-blocking");
+            if let Some(ref network) = state.network {
+                network.stop_network();
             }
         });
     }
 
-    pub fn create_outgoing_call(
+    pub fn create_outgoing_direct_call(
         &self,
         callee_id: &PeerId,
         call_id: CallId,
@@ -300,7 +299,7 @@ impl CallEndpoint {
         });
     }
 
-    pub fn accept_incoming_call(&self, call_id: CallId) {
+    pub fn accept_incoming_direct_call(&self, call_id: CallId) {
         self.actor.send(move |state| {
             state
                 .call_manager
@@ -327,7 +326,7 @@ impl CallEndpoint {
         let sender_id = sender_id.clone();
 
         let sender_identity_key = sender_id.as_bytes().to_vec();
-        let receiver_identity_key = self.peer_id.as_bytes().to_vec();
+        let receiver_identity_key = self.peer_id().as_bytes().to_vec();
         self.actor.send(move |state| {
             let cm = &mut state.call_manager;
             match msg {
@@ -340,7 +339,6 @@ impl CallEndpoint {
                             age: Duration::from_secs(0),
                             sender_device_id,
                             receiver_device_id: state.device_id,
-                            receiver_device_is_primary: (state.device_id == 1),
                             sender_identity_key,
                             receiver_identity_key,
                         },
@@ -387,6 +385,35 @@ impl CallEndpoint {
         });
     }
 
+    pub fn receive_call_message(
+        &self,
+        sender_id: &PeerId,
+        sender_device_id: DeviceId,
+        received_at: Instant,
+        group_message: Vec<u8>,
+    ) {
+        info!(
+            "Received call message from sender `{}` on device {}",
+            sender_id, sender_device_id
+        );
+
+        let sender_uuid = util::string_to_uuid(sender_id).expect("sender_id is valid uuid");
+        self.actor.send(move |state| {
+            let local_device_id = state.device_id;
+            state
+                .call_manager
+                .received_call_message(
+                    sender_uuid,
+                    // these two arguments are ignored
+                    sender_device_id,
+                    local_device_id,
+                    group_message,
+                    received_at.elapsed(),
+                )
+                .expect("received valid call message");
+        });
+    }
+
     pub fn send_video<T: VideoInput + Send + 'static>(
         &self,
         input: T,
@@ -419,13 +446,16 @@ impl SignalingSender for CallEndpoint {
     ) -> Result<()> {
         // To send across threads
         let recipient_id = recipient_id.to_string();
+        let sender_id = self.peer_id();
 
         self.actor.send(move |state| {
-            let sender_id = &state.peer_id;
-            let sender_device_id = state.device_id;
-            state
-                .signaling_server
-                .send(sender_id, sender_device_id, &recipient_id, call_id, msg);
+            state.signaling_server.send_signaling(
+                &sender_id,
+                state.device_id,
+                &recipient_id,
+                call_id,
+                msg,
+            );
             state
                 .call_manager
                 .message_sent(call_id)
@@ -436,11 +466,22 @@ impl SignalingSender for CallEndpoint {
 
     fn send_call_message(
         &self,
-        _recipient_id: UserId,
-        _message: Vec<u8>,
+        recipient_id: UserId,
+        message: Vec<u8>,
         _urgency: group_call::SignalingMessageUrgency,
     ) -> Result<()> {
-        unimplemented!()
+        let sender_id = self.peer_id();
+        self.actor.send(move |state| {
+            let sender_device_id = state.device_id;
+            state.signaling_server.send_call_message(
+                &sender_id,
+                sender_device_id,
+                recipient_id,
+                message,
+            )
+        });
+
+        Ok(())
     }
 
     fn send_call_message_to_group(
@@ -450,202 +491,26 @@ impl SignalingSender for CallEndpoint {
         _urgency: group_call::SignalingMessageUrgency,
         _recipients_override: HashSet<UserId>,
     ) -> Result<()> {
-        unimplemented!()
-    }
-}
-
-impl CallStateHandler for CallEndpoint {
-    fn handle_call_state(
-        &self,
-        remote_peer_id: &str,
-        call_id: CallId,
-        call_state: CallState,
-    ) -> Result<()> {
-        info!(
-            "State change in call from {}.{} to {}: now {:?}",
-            self.peer_id, self.device_id, remote_peer_id, call_state
-        );
-
-        self.actor.send(move |state| {
-            if let CallState::Incoming(_call_media_type) | CallState::Outgoing(_call_media_type) =
-                call_state
-            {
-                state
-                    .call_manager
-                    .proceed(
-                        call_id,
-                        state.call_context.clone(),
-                        state.call_config.clone(),
-                        None,
-                    )
-                    .expect("proceed with call");
-            } else if let CallState::Ringing = call_state {
-                if let Some(ringing_sender) = &state.event_sync.ringing {
-                    let _ = ringing_sender.send(());
-                }
-            } else if let CallState::Connected = call_state {
-                if let Some(connected_sender) = &state.event_sync.connected {
-                    let _ = connected_sender.send(());
-                }
-            }
-        });
-        Ok(())
-    }
-
-    fn handle_network_route(
-        &self,
-        remote_peer_id: &str,
-        network_route: NetworkRoute,
-    ) -> Result<()> {
-        info!(
-            "Network route changed for {} => {}: {:?}",
-            self.peer_id, remote_peer_id, network_route
-        );
-        Ok(())
-    }
-
-    fn handle_audio_levels(
-        &self,
-        remote_peer_id: &str,
-        captured_level: AudioLevel,
-        received_level: AudioLevel,
-    ) -> Result<()> {
-        debug!(
-            "Audio Levels captured for {} => {}: captured: {}; received: {}",
-            self.peer_id, remote_peer_id, captured_level, received_level
-        );
-        Ok(())
-    }
-
-    fn handle_low_bandwidth_for_video(&self, remote_peer_id: &str, recovered: bool) -> Result<()> {
-        info!(
-            "Not enough bandwidth to send video reliably {} => {}: recovered: {}",
-            self.peer_id, remote_peer_id, recovered
-        );
-        Ok(())
-    }
-
-    fn handle_remote_video_state(&self, remote_peer_id: &str, enabled: bool) -> Result<()> {
-        info!(
-            "Video State for {} => {}: {}",
-            self.peer_id, remote_peer_id, enabled
-        );
-        Ok(())
-    }
-
-    fn handle_remote_sharing_screen(&self, remote_peer_id: &str, enabled: bool) -> Result<()> {
-        info!(
-            "Sharing Screen for {} => {}: {}",
-            self.peer_id, remote_peer_id, enabled
-        );
-        Ok(())
-    }
-}
-
-impl GroupUpdateHandler for CallEndpoint {
-    fn handle_group_update(&self, update: GroupUpdate) -> Result<()> {
-        info!("Group Update {}", update);
-        Ok(())
+        error!("Asked to send call message to group, but is not implemented yet");
+        todo!("Implement so that this works with groups of greater size than 2")
     }
 }
 
 impl http::Delegate for CallEndpoint {
-    fn send_request(&self, _request_id: u32, _request: http::Request) {
-        unimplemented!()
-    }
-}
+    fn send_request(&self, request_id: u32, request: http::Request) {
+        let endpoint = self.clone();
 
-pub struct DeterministicLoss {
-    pre_delay: u8,
-    ignore_last_n: u8,
-    current_loss_count: u8,
-    loss_map_iter: Cycle<StepBy<bitvec::slice::Iter<'static, usize, LocalBits>>>,
-}
-
-impl DeterministicLoss {
-    pub fn new(loss_rate: u8, packet_size_ms: i32, pre_delay: u8) -> Result<Self> {
-        if loss_rate > 50 || loss_rate % 5 != 0 {
-            return Err(anyhow!(
-                "Loss rate must be less than 50% and a multiple of 5"
-            ));
-        }
-
-        // This loss map represents 1,024 decisions for a loss rate of 50%. From this, we can
-        // support any loss rate < 50% whilst keeping them all _somewhat_ aligned.
-        let loss_map: &'static BitSlice = bits![static
-            0, 1, 0, 1, 0, 1, 1, 0, 1, 0, 1, 1, 1, 0, 1, 0, 1, 0, 0, 0, 1, 0, 1, 0, 1, 1, 1, 0, 1,
-            0, 1, 1, 0, 0, 1, 0, 0, 1, 0, 1, 0, 0, 0, 0, 1, 0, 0, 1, 0, 1, 0, 1, 0, 1, 0, 0, 1, 1,
-            0, 0, 1, 0, 0, 0, 0, 1, 0, 1, 1, 0, 0, 0, 1, 1, 1, 0, 0, 1, 1, 1, 0, 1, 1, 1, 1, 0, 0,
-            0, 0, 0, 0, 1, 0, 1, 0, 1, 1, 0, 1, 1, 0, 0, 0, 1, 0, 1, 1, 1, 0, 1, 0, 0, 0, 1, 1, 1,
-            1, 0, 0, 0, 0, 1, 1, 0, 0, 1, 0, 0, 1, 0, 1, 0, 0, 1, 1, 0, 0, 0, 1, 0, 1, 1, 0, 1, 1,
-            1, 0, 0, 1, 1, 1, 0, 1, 0, 0, 0, 1, 0, 1, 1, 1, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 1,
-            0, 1, 0, 0, 1, 1, 0, 0, 0, 0, 0, 1, 1, 0, 0, 1, 0, 0, 0, 1, 1, 1, 0, 1, 0, 0, 0, 1, 0,
-            0, 1, 0, 1, 1, 1, 0, 0, 1, 0, 1, 1, 0, 1, 1, 0, 1, 0, 0, 0, 1, 1, 1, 1, 0, 0, 1, 0, 1,
-            0, 1, 0, 0, 1, 0, 1, 1, 0, 1, 0, 0, 1, 0, 0, 0, 0, 1, 1, 1, 1, 0, 1, 1, 0, 1, 1, 0, 1,
-            0, 0, 0, 1, 1, 0, 1, 1, 1, 0, 1, 0, 1, 1, 0, 0, 1, 0, 0, 1, 1, 1, 0, 0, 1, 0, 0, 0, 1,
-            1, 0, 0, 0, 0, 1, 1, 0, 0, 0, 1, 0, 1, 0, 0, 1, 0, 0, 0, 0, 0, 1, 1, 1, 0, 0, 1, 1, 1,
-            1, 1, 0, 0, 1, 1, 0, 1, 0, 1, 1, 0, 0, 1, 0, 0, 1, 1, 0, 0, 0, 0, 1, 1, 1, 1, 0, 1, 1,
-            1, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 1, 1, 0, 0, 1, 0, 0, 0, 1, 1, 0, 1, 0, 0, 1,
-            1, 0, 1, 1, 1, 0, 1, 0, 0, 0, 1, 0, 0, 1, 0, 1, 0, 0, 1, 1, 1, 0, 0, 0, 1, 1, 1, 1, 1,
-            0, 0, 1, 0, 0, 1, 1, 1, 1, 1, 0, 0, 1, 1, 0, 0, 0, 1, 1, 1, 0, 0, 1, 1, 1, 1, 0, 1, 0,
-            1, 0, 0, 1, 0, 1, 0, 1, 1, 1, 0, 1, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 1, 1, 1, 0, 1, 0, 1,
-            0, 1, 0, 1, 0, 0, 0, 1, 0, 1, 0, 0, 1, 1, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 0,
-            0, 1, 0, 0, 1, 1, 1, 1, 1, 1, 0, 1, 1, 1, 1, 1, 0, 1, 1, 0, 1, 0, 0, 1, 1, 1, 1, 0, 0,
-            1, 0, 0, 1, 1, 1, 0, 1, 1, 1, 1, 1, 1, 0, 1, 0, 1, 0, 0, 1, 1, 1, 0, 1, 0, 1, 0, 0, 1,
-            1, 0, 0, 0, 1, 0, 0, 0, 1, 1, 0, 0, 1, 1, 0, 0, 1, 1, 1, 0, 0, 1, 0, 0, 0, 1, 0, 1, 1,
-            0, 0, 0, 0, 1, 1, 0, 1, 0, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 1, 1, 1, 1, 0, 1, 1, 0, 0, 1,
-            0, 0, 1, 0, 0, 1, 1, 0, 1, 0, 1, 0, 1, 1, 0, 0, 0, 1, 0, 1, 1, 0, 1, 0, 1, 1, 1, 1, 1,
-            1, 0, 1, 0, 1, 1, 1, 0, 0, 0, 0, 0, 1, 0, 0, 1, 1, 0, 1, 1, 0, 0, 0, 1, 1, 1, 1, 1, 1,
-            1, 1, 0, 0, 0, 1, 1, 0, 1, 0, 0, 1, 0, 1, 0, 1, 0, 0, 0, 1, 1, 1, 1, 1, 0, 0, 1, 0, 1,
-            1, 1, 0, 1, 0, 1, 1, 0, 0, 0, 0, 1, 0, 1, 1, 1, 1, 0, 1, 1, 1, 0, 1, 1, 0, 0, 1, 1, 1,
-            1, 0, 0, 0, 1, 0, 1, 0, 0, 1, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 1, 1,
-            0, 1, 0, 0, 1, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 1, 0, 1, 1, 1, 0, 1, 1, 1, 0, 0, 0, 0, 1,
-            0, 1, 0, 0, 1, 1, 1, 1, 0, 1, 1, 0, 1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 1, 1, 0, 0, 1, 1, 1,
-            1, 0, 1, 0, 0, 1, 1, 1, 1, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 1, 0, 0, 1, 1, 1, 0, 0, 0, 1,
-            1, 0, 0, 1, 1, 0, 1, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 1, 0, 0, 1, 0, 0,
-            0, 0, 1, 1, 1, 1, 1, 0, 0, 0, 1, 0, 1, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 0, 1, 0,
-            0, 1, 1, 1, 1, 1, 1, 1, 0, 0, 1, 0, 0, 1, 1, 1, 0, 1, 0, 1, 0, 0, 1, 1, 0, 0, 1, 1, 0,
-            0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 0, 0, 1, 1, 0, 0,
-            1, 1, 0, 1, 0, 0, 0, 1, 1, 0, 0, 1, 1, 1, 0, 0, 0, 1, 0, 1, 0, 1, 0, 1, 1, 1, 1, 1, 1,
-            0, 0, 1, 1, 0, 1, 1, 1, 0, 0, 1, 1, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0,
-            0, 1, 0, 1, 1, 1, 1, 1, 0,
-        ];
-
-        // For different loss rates (< 50), we will ignore one or more for every 10 loss signals,
-        // at the end of every 10 losses.
-        let ignore_last_n = 10 - loss_rate / 5;
-
-        // Iterate through the loss map. Based on the packet time, skip every n losses
-        // to help keep different packet times _somewhat_ aligned.
-        let packet_time_step = (packet_size_ms / 20) as usize;
-        let loss_map_iter = loss_map.iter().step_by(packet_time_step).cycle();
-
-        Ok(Self {
-            pre_delay,
-            ignore_last_n,
-            current_loss_count: 0,
-            loss_map_iter,
-        })
-    }
-
-    pub fn next_is_loss(&mut self) -> bool {
-        if self.pre_delay > 0 {
-            self.pre_delay -= 1;
-            return false;
-        }
-
-        if *self.loss_map_iter.next().expect("iterator has next()") {
-            // The packet should be 'lost' as per the loss map.
-            let ignore_loss = (10 - self.current_loss_count) <= self.ignore_last_n;
-
-            self.current_loss_count += 1;
-            if self.current_loss_count == 10 {
-                self.current_loss_count = 0;
-            }
-
-            !ignore_loss
-        } else {
-            false
-        }
+        self.actor.send(move |state| {
+            state.delegate_http_client.send_request(
+                request,
+                Box::new(move |response| {
+                    endpoint.actor.send(move |state| {
+                        state
+                            .call_manager
+                            .received_http_response(request_id, response);
+                    });
+                }),
+            );
+        });
     }
 }

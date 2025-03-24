@@ -3,17 +3,24 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //
 
-use crate::webrtc;
-use crate::webrtc::ffi::media::{RffiAudioTrack, RffiVideoSource, RffiVideoTrack};
-use crate::webrtc::ffi::peer_connection::RffiPeerConnection;
-use crate::webrtc::ffi::peer_connection_observer::RffiPeerConnectionObserver;
-#[cfg(feature = "injectable_network")]
-use crate::webrtc::injectable_network::RffiInjectableNetwork;
-use crate::webrtc::peer_connection_factory::{
-    RffiAudioConfig, RffiAudioJitterBufferConfig, RffiIceServers, RffiPeerConnectionKind,
-};
 #[cfg(feature = "native")]
 use std::os::raw::c_char;
+
+#[cfg(feature = "injectable_network")]
+use crate::webrtc::injectable_network::RffiInjectableNetwork;
+use crate::{
+    webrtc,
+    webrtc::{
+        ffi::{
+            media::{RffiAudioTrack, RffiVideoSource, RffiVideoTrack},
+            peer_connection::RffiPeerConnection,
+            peer_connection_observer::RffiPeerConnectionObserver,
+        },
+        peer_connection_factory::{
+            RffiAudioConfig, RffiAudioJitterBufferConfig, RffiIceServers, RffiPeerConnectionKind,
+        },
+    },
+};
 
 /// Incomplete type for C++ PeerConnectionFactoryOwner.
 #[repr(C)]
@@ -32,16 +39,6 @@ pub struct RffiPeerConnectionFactoryInterface {
 // See "class PeerConnectionFactoryInterface: public rtc::RefCountInterface"
 // in webrtc/api/peer_connection_interface.h
 impl webrtc::RefCounted for RffiPeerConnectionFactoryInterface {}
-
-/// Incomplete type for C++ AudioDeviceModule.
-#[repr(C)]
-pub struct RffiAudioDeviceModule {
-    _private: [u8; 0],
-}
-
-// See "class AudioDeviceModule : public rtc::RefCountInterface"
-// in webrtc/modules/audio_device/include/audio_device.h
-impl webrtc::RefCounted for RffiAudioDeviceModule {}
 
 extern "C" {
     pub fn Rust_createPeerConnectionFactory(

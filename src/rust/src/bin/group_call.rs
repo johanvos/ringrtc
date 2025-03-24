@@ -3,27 +3,25 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //
 
-mod support {
-    pub mod http_client;
-}
-use support::http_client;
-
-use std::collections::{HashMap, HashSet};
-use std::sync::{Arc, Mutex};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::{Arc, Mutex},
+};
 
 use log::info;
-
-use ringrtc::core::group_call::Reaction;
 use ringrtc::{
     common::units::DataRate,
     core::{
         call_mutex::CallMutex,
         group_call::{
-            self, ClientId, ConnectionState, EndReason, HttpSfuClient, JoinState,
-            RemoteDeviceState, RemoteDevicesChangedReason,
+            self, ClientId, ConnectionState, EndReason, HttpSfuClient, JoinState, Reaction,
+            RemoteDeviceState, RemoteDevicesChangedReason, SpeechEvent,
         },
     },
-    lite::sfu::{DemuxId, PeekInfo, UserId},
+    lite::{
+        http::sim as sim_http,
+        sfu::{DemuxId, MemberMap, ObfuscatedResolver, PeekInfo, UserId},
+    },
     protobuf,
     webrtc::{
         media::{VideoFrame, VideoFrameMetadata, VideoPixelFormat, VideoSink, VideoTrack},
@@ -125,6 +123,10 @@ impl group_call::Observer for Observer {
         // ignore
     }
 
+    fn handle_speaking_notification(&mut self, _client_id: ClientId, event: SpeechEvent) {
+        info!("Speaking {:?}", event);
+    }
+
     fn handle_audio_levels(
         &self,
         _client_id: group_call::ClientId,
@@ -144,6 +146,10 @@ impl group_call::Observer for Observer {
 
     fn handle_raised_hands(&self, _client_id: ClientId, raised_hands: Vec<DemuxId>) {
         info!("Raised hands changed to {:?}", raised_hands);
+    }
+
+    fn handle_rtc_stats_report(&self, _report_json: String) {
+        // ignore
     }
 }
 
@@ -195,7 +201,7 @@ fn main() {
     ringrtc::webrtc::logging::set_logger(log::LevelFilter::Info);
 
     let group_id = b"Test Group".to_vec();
-    let http_client = http_client::HttpClient::start();
+    let http_client = sim_http::HttpClient::start();
     let sfu_client = Box::new(HttpSfuClient::new(
         Box::new(http_client),
         url.to_string(),
@@ -218,21 +224,24 @@ fn main() {
         .unwrap();
     let busy = Arc::new(CallMutex::new(false, "busy"));
     let self_uuid = Arc::new(CallMutex::new(None, "self_uuid"));
-    let client = group_call::Client::start(
+    let obfuscated_resolver = ObfuscatedResolver::new(Arc::new(MemberMap::new(&[])), None);
+
+    let client = group_call::Client::start(group_call::ClientStartParams {
         group_id,
-        1,
-        group_call::GroupCallKind::SignalGroup,
+        client_id: 1,
+        kind: group_call::GroupCallKind::SignalGroup,
         sfu_client,
-        Box::new(observer.clone()),
+        obfuscated_resolver,
+        observer: Box::new(observer.clone()),
         busy,
         self_uuid,
-        None,
+        peer_connection_factory: None,
         outgoing_audio_track,
-        Some(outgoing_video_track.clone()),
-        Some(Box::new(observer.clone())),
-        None,
-        None,
-    )
+        outgoing_video_track: Some(outgoing_video_track.clone()),
+        incoming_video_sink: Some(Box::new(observer.clone())),
+        ring_id: None,
+        audio_levels_interval: None,
+    })
     .unwrap();
 
     let send_rate_override = DataRate::from_mbps(10);

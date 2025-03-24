@@ -5,29 +5,34 @@
 
 //! iOS Call Manager
 
-use std::ffi::c_void;
-use std::sync::Arc;
-use std::time::Duration;
+use std::{ffi::c_void, sync::Arc, time::Duration};
 
 use anyhow::anyhow;
 
-use crate::ios::api::call_manager_interface::{AppCallContext, AppInterface, AppObject};
-use crate::ios::ios_platform::IosPlatform;
-
-use crate::common::{CallConfig, CallId, CallMediaType, DataMode, DeviceId, Result};
-use crate::core::call_manager::CallManager;
-use crate::core::util::{ptr_as_box, ptr_as_mut};
-use crate::core::{call_manager, group_call, signaling};
-use crate::error::RingRtcError;
-use crate::lite::call_links::CallLinkRootKey;
-use crate::lite::{
-    http,
-    sfu::{DemuxId, GroupMember, UserId},
+use crate::{
+    common::{CallConfig, CallId, CallMediaType, DataMode, DeviceId, Result},
+    core::{
+        call_manager,
+        call_manager::CallManager,
+        group_call, signaling,
+        util::{ptr_as_box, ptr_as_mut},
+    },
+    error::RingRtcError,
+    ios::{
+        api::call_manager_interface::{AppCallContext, AppInterface, AppObject},
+        ios_platform::IosPlatform,
+    },
+    lite::{
+        call_links::CallLinkRootKey,
+        http,
+        sfu::{DemuxId, GroupMember, UserId},
+    },
+    protobuf, webrtc,
+    webrtc::{
+        media,
+        peer_connection_factory::{self as pcf, PeerConnectionFactory},
+    },
 };
-use crate::protobuf;
-use crate::webrtc;
-use crate::webrtc::media;
-use crate::webrtc::peer_connection_factory::{self as pcf, PeerConnectionFactory};
 
 /// Public type for iOS CallManager
 pub type IosCallManager = CallManager<IosPlatform>;
@@ -178,7 +183,6 @@ pub fn received_offer(
     age_sec: u64,
     call_media_type: CallMediaType,
     receiver_device_id: DeviceId,
-    receiver_device_is_primary: bool,
     sender_identity_key: Option<Vec<u8>>,
     receiver_identity_key: Option<Vec<u8>>,
 ) -> Result<()> {
@@ -227,7 +231,6 @@ pub fn received_offer(
             age: Duration::from_secs(age_sec),
             sender_device_id,
             receiver_device_id,
-            receiver_device_is_primary,
             sender_identity_key,
             receiver_identity_key,
         },
@@ -316,6 +319,16 @@ pub fn get_active_call_context(call_manager: *mut IosCallManager) -> Result<*mut
     let app_call_context = call.call_context()?;
 
     Ok(app_call_context.object)
+}
+
+/// CMI request to set the audio status
+pub fn set_audio_enable(call_manager: *mut IosCallManager, enable: bool) -> Result<()> {
+    let call_manager = unsafe { ptr_as_mut(call_manager)? };
+    let mut active_connection = call_manager.active_connection()?;
+    active_connection.update_sender_status(signaling::SenderStatus {
+        audio_enabled: Some(enable),
+        ..Default::default()
+    })
 }
 
 /// CMI request to set the video status
@@ -641,7 +654,6 @@ pub fn validate_offer(
         age: Duration::from_secs(age_sec),
         sender_device_id: 1,
         receiver_device_id: 1,
-        receiver_device_is_primary: true,
         sender_identity_key: vec![],
         receiver_identity_key: vec![],
     })

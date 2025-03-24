@@ -79,12 +79,12 @@ then
     exit 1
 fi
 
-export MACOSX_DEPLOYMENT_TARGET="10.13"
+export MACOSX_DEPLOYMENT_TARGET="10.15"
 
 # Build WebRTC.
 (
     cd src/webrtc/src
-    WEBRTC_ARGS="rtc_build_examples=false rtc_build_tools=false rtc_include_tests=false rtc_enable_protobuf=false rtc_use_x11=false rtc_enable_sctp=false rtc_libvpx_build_vp9=false rtc_include_ilbc=false rtc_disable_metrics=true rtc_disable_trace_events=true"
+    WEBRTC_ARGS="rtc_build_examples=false rtc_build_tools=false rtc_include_tests=false rtc_enable_protobuf=false rtc_use_x11=false rtc_enable_sctp=false rtc_libvpx_build_vp9=false rtc_disable_metrics=true rtc_disable_trace_events=true"
 
     if [ "${BUILD_TYPE}" = "debug" ]
     then
@@ -100,10 +100,10 @@ export MACOSX_DEPLOYMENT_TARGET="10.13"
 (
     if [ "${BUILD_TYPE}" = "debug" ]
     then
-        OUTPUT_DIR="${OUTPUT_DIR}" cargo build --package ringrtc --bin group_call --features=native,http
+        OUTPUT_DIR="${OUTPUT_DIR}" cargo build --package ringrtc --bin group_call --features=native,sim_http
         echo "Can run with target/debug/group_call"
     else
-        OUTPUT_DIR="${OUTPUT_DIR}" cargo build --package ringrtc --bin group_call --features=native,http --release
+        OUTPUT_DIR="${OUTPUT_DIR}" cargo build --package ringrtc --bin group_call --features=native,sim_http --release
         echo "Can run with target/release/group_call"
     fi
 )

@@ -5,8 +5,9 @@
 
 //! WebRTC FFI Create / Set Session Description Interface.
 
-use libc::size_t;
 use std::os::raw::c_char;
+
+use libc::size_t;
 
 use crate::webrtc::{
     self,
@@ -87,7 +88,6 @@ extern "C" {
         offer: bool,
         v4: webrtc::ptr::Borrowed<RffiConnectionParametersV4>,
         enable_tcc_audio: bool,
-        enable_red_audio: bool,
         enable_vp9: bool,
     ) -> webrtc::ptr::Owned<RffiSessionDescription>;
 

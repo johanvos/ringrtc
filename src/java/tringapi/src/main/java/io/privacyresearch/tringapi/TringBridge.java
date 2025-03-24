@@ -4,7 +4,6 @@ import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Optional;
 import java.util.ServiceLoader;
-import java.util.UUID;
 import java.util.logging.Logger;
 import java.util.stream.Collectors;
 
@@ -80,6 +79,10 @@ public class TringBridge {
 
     public long startOutgoingCall(long callId, String peerId, int localDeviceId, boolean enableVideo) {
         return service.startOutgoingCall(callId, peerId, localDeviceId, enableVideo);
+    }
+
+    public void enableOutgoingAudio(boolean enable) {
+        service.enableOutgoingAudio(enable);
     }
 
     public void enableOutgoingVideo(boolean enable) {

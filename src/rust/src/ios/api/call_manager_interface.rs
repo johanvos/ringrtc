@@ -5,25 +5,18 @@
 
 //! iOS Call Manager Interface
 
-use std::convert::TryFrom;
-use std::ffi::c_void;
-use std::time::Duration;
-use std::{fmt, ptr, slice};
+use std::{convert::TryFrom, ffi::c_void, fmt, ptr, slice, time::Duration};
 
 use libc::size_t;
 
-use crate::ios::call_manager;
-use crate::ios::call_manager::IosCallManager;
+use crate::{
+    common::{CallConfig, CallMediaType, DataMode, DeviceId},
+    core::{group_call, signaling},
+    ios::{call_manager, call_manager::IosCallManager},
+    lite::{call_links::CallLinkRootKey, http, sfu, sfu::DemuxId},
+    webrtc::{self, media, peer_connection::AudioLevel, peer_connection_factory as pcf},
+};
 
-use crate::common::{CallConfig, CallMediaType, DataMode, DeviceId};
-use crate::core::group_call;
-use crate::core::signaling;
-use crate::lite::call_links::CallLinkRootKey;
-use crate::lite::{http, sfu, sfu::DemuxId};
-use crate::webrtc::peer_connection::AudioLevel;
-use crate::webrtc::{self, media, peer_connection_factory as pcf};
-
-///
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
 #[allow(non_snake_case)]
@@ -502,6 +495,8 @@ pub struct AppInterface {
     ),
     pub handleEnded:
         extern "C" fn(object: *mut c_void, clientId: group_call::ClientId, reason: i32),
+    pub handleSpeakingNotification:
+        extern "C" fn(object: *mut c_void, clientId: group_call::ClientId, event: i32),
 }
 
 // Add an empty Send trait to allow transfer of ownership between threads.
@@ -727,7 +722,6 @@ pub extern "C" fn ringrtcReceivedOffer(
     messageAgeSec: u64,
     callMediaType: i32,
     receiverDeviceId: u32,
-    receiverDeviceIsPrimary: bool,
     senderIdentityKey: AppByteSlice,
     receiverIdentityKey: AppByteSlice,
 ) -> *mut c_void {
@@ -740,7 +734,6 @@ pub extern "C" fn ringrtcReceivedOffer(
         messageAgeSec,
         CallMediaType::from_i32(callMediaType),
         receiverDeviceId as DeviceId,
-        receiverDeviceIsPrimary,
         byte_vec_from_app_slice(&senderIdentityKey),
         byte_vec_from_app_slice(&receiverIdentityKey),
     ) {
@@ -910,6 +903,18 @@ pub extern "C" fn ringrtcGetActiveCallContext(callManager: *mut c_void) -> *mut 
 
 #[no_mangle]
 #[allow(non_snake_case)]
+pub extern "C" fn ringrtcSetAudioEnable(callManager: *mut c_void, enable: bool) -> *mut c_void {
+    match call_manager::set_audio_enable(callManager as *mut IosCallManager, enable) {
+        Ok(_v) => {
+            // Return the object reference back as indication of success.
+            callManager
+        }
+        Err(_e) => ptr::null_mut(),
+    }
+}
+
+#[no_mangle]
+#[allow(non_snake_case)]
 pub extern "C" fn ringrtcSetVideoEnable(callManager: *mut c_void, enable: bool) -> *mut c_void {
     match call_manager::set_video_enable(callManager as *mut IosCallManager, enable) {
         Ok(_v) => {
@@ -1027,7 +1032,7 @@ pub extern "C" fn ringrtcCreateGroupCallClient(
         },
     ) {
         Ok(client_id) => client_id,
-        Err(_e) => 0,
+        Err(_e) => group_call::INVALID_CLIENT_ID,
     }
 }
 

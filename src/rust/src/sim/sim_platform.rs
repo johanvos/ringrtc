@@ -5,29 +5,40 @@
 
 //! Simulation CallPlatform Interface.
 
-use std::collections::{HashMap, HashSet};
-use std::fmt;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::{
+    collections::{HashMap, HashSet},
+    fmt,
+    sync::{
+        atomic::{AtomicBool, AtomicUsize, Ordering},
+        Arc, Mutex,
+    },
+    time::Duration,
+};
 
-use crate::common::{
-    ApplicationEvent, CallConfig, CallDirection, CallId, CallMediaType, DeviceId, Result,
+use crate::{
+    common::{
+        ApplicationEvent, CallConfig, CallDirection, CallId, CallMediaType, DeviceId, Result,
+    },
+    core::{
+        call::Call,
+        call_manager::CallManager,
+        connection::{Connection, ConnectionType},
+        group_call,
+        platform::{Platform, PlatformItem},
+        signaling,
+    },
+    lite::{
+        sfu,
+        sfu::{DemuxId, PeekInfo, PeekResult, UserId},
+    },
+    sim::error::SimError,
+    webrtc::{
+        media::{MediaStream, VideoTrack},
+        peer_connection::{AudioLevel, PeerConnection, ReceivedAudioLevel},
+        peer_connection_observer::NetworkRoute,
+        sim::peer_connection::RffiPeerConnection,
+    },
 };
-use crate::core::call::Call;
-use crate::core::call_manager::CallManager;
-use crate::core::connection::{Connection, ConnectionType};
-use crate::core::platform::{Platform, PlatformItem};
-use crate::core::{group_call, signaling};
-use crate::lite::{
-    sfu,
-    sfu::{DemuxId, PeekInfo, PeekResult, UserId},
-};
-use crate::sim::error::SimError;
-use crate::webrtc::media::{MediaStream, VideoTrack};
-use crate::webrtc::peer_connection::{AudioLevel, PeerConnection, ReceivedAudioLevel};
-use crate::webrtc::peer_connection_observer::NetworkRoute;
-use crate::webrtc::sim::peer_connection::RffiPeerConnection;
 
 /// Simulation implementation for platform::Platform::{AppIncomingMedia,
 /// AppRemotePeer, AppCallContext}
@@ -183,8 +194,8 @@ impl Platform for SimPlatform {
             Err(SimError::StartCallError.into())
         } else {
             let _ = match direction {
-                CallDirection::OutGoing => self.stats.start_outgoing.fetch_add(1, Ordering::AcqRel),
-                CallDirection::InComing => self.stats.start_incoming.fetch_add(1, Ordering::AcqRel),
+                CallDirection::Outgoing => self.stats.start_outgoing.fetch_add(1, Ordering::AcqRel),
+                CallDirection::Incoming => self.stats.start_incoming.fetch_add(1, Ordering::AcqRel),
             };
             Ok(())
         }
@@ -527,6 +538,14 @@ impl Platform for SimPlatform {
         network_route: NetworkRoute,
     ) {
         info!("handle_network_route_changed(): {:?}", network_route);
+    }
+
+    fn handle_speaking_notification(
+        &self,
+        _client_id: group_call::ClientId,
+        event: group_call::SpeechEvent,
+    ) {
+        info!("handle_speaking_notification(): {:?}", event,);
     }
 
     fn handle_audio_levels(

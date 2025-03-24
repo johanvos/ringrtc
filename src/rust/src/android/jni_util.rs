@@ -5,19 +5,19 @@
 
 //! Utility helpers for JNI access
 
-use std::collections::HashMap;
-use std::convert::{TryFrom, TryInto};
-use std::marker::PhantomData;
+use std::{
+    collections::HashMap,
+    convert::{TryFrom, TryInto},
+    marker::PhantomData,
+};
 
-use jni::objects::{GlobalRef, JClass, JObject, JValue, JValueOwned};
-use jni::JNIEnv;
+use jni::{
+    objects::{GlobalRef, JClass, JObject, JValue, JValueOwned},
+    JNIEnv,
+};
 
-use crate::android::error::AndroidError;
-use crate::common::Result;
-use crate::core::util::try_scoped;
-
-pub use crate::jni_class_name;
-pub use crate::jni_signature;
+use crate::{android::error::AndroidError, common::Result, core::util::try_scoped};
+pub use crate::{jni_class_name, jni_signature};
 
 macro_rules! jni_arg {
     ( $arg:expr => boolean ) => {
@@ -340,7 +340,7 @@ impl<'a> std::ops::Deref for ExceptionCheckingJNIEnv<'a> {
     }
 }
 
-impl<'a> std::ops::DerefMut for ExceptionCheckingJNIEnv<'a> {
+impl std::ops::DerefMut for ExceptionCheckingJNIEnv<'_> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.0
     }

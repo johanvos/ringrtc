@@ -12,17 +12,15 @@ use std::{
     time::{Duration, SystemTime},
 };
 
-use base64::engine::general_purpose::STANDARD as base64;
-use base64::Engine;
+use base64::{engine::general_purpose::STANDARD as base64, Engine};
+pub use member_resolver::CallLinkMemberResolver;
+pub use root_key::CallLinkRootKey;
 use serde::{self, Deserialize, Serialize};
 use serde_with::serde_as;
 
-use crate::lite::http;
+use crate::{lite::http, protobuf::group_call::sfu_to_device};
 
-pub use member_resolver::CallLinkMemberResolver;
-pub use root_key::CallLinkRootKey;
-
-#[derive(Serialize, Deserialize, Debug, PartialEq, Eq)]
+#[derive(Clone, Serialize, Deserialize, Debug, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub enum CallLinkRestrictions {
     None,
@@ -31,17 +29,49 @@ pub enum CallLinkRestrictions {
     Unknown,
 }
 
-#[derive(Deserialize)]
-struct CallLinkResponse<'a> {
-    #[serde(rename = "name")]
-    encrypted_name: &'a [u8],
-    restrictions: CallLinkRestrictions,
-    revoked: bool,
-    #[serde(rename = "expiration")]
-    expiration_unix_timestamp: u64,
+impl From<sfu_to_device::peek_info::CallLinkRestrictions> for CallLinkRestrictions {
+    fn from(value: sfu_to_device::peek_info::CallLinkRestrictions) -> Self {
+        use sfu_to_device::peek_info::CallLinkRestrictions as ProtoCallLinkRestrictions;
+
+        match value {
+            ProtoCallLinkRestrictions::AdminApproval => Self::AdminApproval,
+            ProtoCallLinkRestrictions::None => Self::None,
+        }
+    }
 }
 
-#[derive(Debug)]
+#[derive(Deserialize, Debug)]
+pub struct CallLinkResponse<'a> {
+    #[serde(rename = "name")]
+    pub encrypted_name: &'a [u8],
+    pub restrictions: CallLinkRestrictions,
+    pub revoked: bool,
+    #[serde(rename = "expiration")]
+    pub expiration_unix_timestamp: u64,
+}
+
+impl<'a> TryFrom<&'a sfu_to_device::peek_info::CallLinkState> for CallLinkResponse<'a> {
+    type Error = String;
+
+    fn try_from(value: &'a sfu_to_device::peek_info::CallLinkState) -> Result<Self, Self::Error> {
+        if value.encrypted_name.is_none()
+            || value.restrictions.is_none()
+            || value.revoked.is_none()
+            || value.expiration_unix_timestamp.is_none()
+        {
+            return Err("Missing required fields in CallLinkState".to_string());
+        }
+
+        Ok(Self {
+            encrypted_name: value.encrypted_name().as_bytes(),
+            restrictions: value.restrictions().into(),
+            revoked: value.revoked(),
+            expiration_unix_timestamp: value.expiration_unix_timestamp(),
+        })
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
 pub struct CallLinkState {
     pub name: String,
     pub restrictions: CallLinkRestrictions,
@@ -50,7 +80,7 @@ pub struct CallLinkState {
 }
 
 impl CallLinkState {
-    fn from(deserialized: CallLinkResponse<'_>, root_key: &CallLinkRootKey) -> Self {
+    pub fn from_serialized(deserialized: CallLinkResponse<'_>, root_key: &CallLinkRootKey) -> Self {
         let name = if deserialized.encrypted_name.is_empty() {
             "".to_string()
         } else {
@@ -116,7 +146,7 @@ pub fn read_call_link(
         },
         Box::new(move |http_response| {
             let result = http::parse_json_response::<CallLinkResponse>(http_response.as_ref())
-                .map(|deserialized| CallLinkState::from(deserialized, &root_key));
+                .map(|response| CallLinkState::from_serialized(response, &root_key));
             result_callback(result);
         }),
     )
@@ -128,6 +158,9 @@ pub fn read_call_link(
 struct CallLinkCreateRequest<'a> {
     #[serde_as(as = "serde_with::base64::Base64")]
     admin_passkey: &'a [u8],
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    restrictions: Option<CallLinkRestrictions>,
 
     #[serde_as(as = "serde_with::base64::Base64")]
     zkparams: &'a [u8],
@@ -159,6 +192,7 @@ pub struct CallLinkDeleteRequest<'a> {
     pub admin_passkey: &'a [u8],
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn create_call_link(
     http_client: &dyn http::Client,
     sfu_url: &str,
@@ -166,6 +200,7 @@ pub fn create_call_link(
     auth_presentation: &[u8],
     admin_passkey: &[u8],
     public_zkparams: &[u8],
+    restrictions: Option<CallLinkRestrictions>,
     result_callback: ReadCallLinkResultCallback,
 ) {
     http_client.send_request(
@@ -186,6 +221,7 @@ pub fn create_call_link(
             body: Some(
                 serde_json::to_vec(&CallLinkCreateRequest {
                     admin_passkey,
+                    restrictions,
                     zkparams: public_zkparams,
                 })
                 .expect("cannot fail to serialize"),
@@ -193,7 +229,7 @@ pub fn create_call_link(
         },
         Box::new(move |http_response| {
             let result = http::parse_json_response::<CallLinkResponse>(http_response.as_ref())
-                .map(|deserialized| CallLinkState::from(deserialized, &root_key));
+                .map(|response| CallLinkState::from_serialized(response, &root_key));
             result_callback(result);
         }),
     )
@@ -226,7 +262,7 @@ pub fn update_call_link(
         },
         Box::new(move |http_response| {
             let result = http::parse_json_response::<CallLinkResponse>(http_response.as_ref())
-                .map(|deserialized| CallLinkState::from(deserialized, &root_key));
+                .map(|response| CallLinkState::from_serialized(response, &root_key));
             result_callback(result);
         }),
     )
@@ -266,10 +302,9 @@ pub fn delete_call_link(
 
 #[cfg(any(target_os = "ios", feature = "check-all"))]
 pub mod ios {
-    use super::*;
-
     use std::ffi::{c_char, c_void, CStr};
 
+    use super::*;
     use crate::lite::{
         ffi::ios::{cstr, rtc_Bytes, rtc_OptionalU16, rtc_String},
         http,
@@ -277,6 +312,14 @@ pub mod ios {
     };
 
     pub type Client = http::DelegatingClient;
+
+    fn from_i8_to_restrictions(raw_restrictions: i8) -> Option<CallLinkRestrictions> {
+        match raw_restrictions {
+            0 => Some(CallLinkRestrictions::None),
+            1 => Some(CallLinkRestrictions::AdminApproval),
+            _ => None,
+        }
+    }
 
     /// Wrapper around `CallLinkRootKey::try_from(&str)`
     ///
@@ -515,10 +558,12 @@ pub mod ios {
         link_root_key: rtc_Bytes,
         admin_passkey: rtc_Bytes,
         call_link_public_params: rtc_Bytes,
+        restrictions: i8,
         delegate: rtc_sfu_CallLinkDelegate,
     ) {
         info!("rtc_sfu_createCallLink():");
 
+        let restrictions = from_i8_to_restrictions(restrictions);
         if let Some(http_client) = http_client.as_ref() {
             if let Ok(sfu_url) = CStr::from_ptr(sfu_url).to_str() {
                 if let Ok(link_root_key) = CallLinkRootKey::try_from(link_root_key.as_slice()) {
@@ -529,6 +574,7 @@ pub mod ios {
                         create_credential_presentation.as_slice(),
                         admin_passkey.as_slice(),
                         call_link_public_params.as_slice(),
+                        restrictions,
                         Box::new(move |result| delegate.handle_response(request_id, result)),
                     )
                 } else {
@@ -585,11 +631,7 @@ pub mod ios {
                         &CallLinkUpdateRequest {
                             admin_passkey: admin_passkey.as_slice(),
                             encrypted_name: encrypted_name.as_deref(),
-                            restrictions: match new_restrictions {
-                                0 => Some(CallLinkRestrictions::None),
-                                1 => Some(CallLinkRestrictions::AdminApproval),
-                                _ => None,
-                            },
+                            restrictions: from_i8_to_restrictions(new_restrictions),
                             revoked: match new_revoked {
                                 0 => Some(false),
                                 1 => Some(true),
