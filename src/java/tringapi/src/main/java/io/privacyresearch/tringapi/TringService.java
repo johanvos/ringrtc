@@ -1,7 +1,6 @@
  package io.privacyresearch.tringapi;
 
 import java.util.List;
-import java.util.UUID;
 
  /**
   * Implementations of this interface provides the access points for the application to interact with
@@ -37,6 +36,12 @@ public interface TringService {
     public default String getVersionInfo() {
         return "Unresolved TringService";
     }
+
+    /**
+     * Disable or enable outgoing audio.
+     * @param enable true if we want to enable outgoing audio, false otherwise
+     */
+    public void enableOutgoingAudio(boolean enable);
 
     /**
      * Disable or enable outgoing video.

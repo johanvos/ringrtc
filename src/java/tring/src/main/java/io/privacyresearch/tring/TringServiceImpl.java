@@ -273,6 +273,16 @@ public class TringServiceImpl implements TringService {
     }
 
     @Override
+    public void enableOutgoingAudio(boolean enable) {
+        LOG.info("Toggle own audio to "+enable+", for clientid = "+this.clientId);
+        if (this.clientId < 0) {
+            tringlib_h.setOutgoingAudioEnabled(callEndpoint, enable);
+        } else {
+            tringlib_h.setOutgoingAudioMuted(callEndpoint, clientId, !enable);
+        }
+    }
+
+    @Override
     public void enableOutgoingVideo(boolean enable) {
         LOG.info("Toggle own video to "+enable+", for clientid = "+this.clientId);
         if (this.clientId < 0) {

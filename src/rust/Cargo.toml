@@ -139,7 +139,7 @@ jni = { version = "0.21.1", default-features = false }
 [build-dependencies]
 prost-build = { version = "0.12.3" }
 tonic-build = { version = "0.11.0" }
-cbindgen = "0.20.0"
+cbindgen = "0.28.0"
 
 [dev-dependencies]
 uuid = { version = "1.13.1" }

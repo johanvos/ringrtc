@@ -263,6 +263,9 @@ pub enum Event {
     // The call with the given remote PeerId has changed state.
     // We assume only one call per remote PeerId at a time.
     CallState(PeerId, CallId, CallState),
+    // The state of the remote audio (whether enabled or not) changed.
+    // Like call state, we ID the call by PeerId and assume there is only one.
+    RemoteAudioStateChange(PeerId, bool),
     // The state of the remote video (whether enabled or not) changed.
     // Like call state, we ID the call by PeerId and assume there is only one.
     RemoteVideoStateChange(PeerId, bool),
@@ -417,8 +420,18 @@ impl EventReporter {
                     (self.statusCallback)(call_id.as_u64(), 1, 10 * state_index, 0);
                 }
             }
+            Event::RemoteAudioStateChange(peer_id, enabled) => {
+                info!("RemoteAudioStateChange to {}", enabled);
+                unsafe {
+                    if enabled {
+                        (self.statusCallback)(1, 1, 22, 41);
+                    } else {
+                        (self.statusCallback)(1, 1, 22, 42);
+                    }
+                }
+            }
             Event::RemoteVideoStateChange(peer_id, enabled) => {
-                info!("RemoveVideoStateChange to {}", enabled);
+                info!("RemoteVideoStateChange to {}", enabled);
                 unsafe {
                     if enabled {
                         (self.statusCallback)(1, 1, 22, 31);
@@ -851,6 +864,14 @@ impl CallStateHandler for EventReporter {
         Ok(())
     }
 
+    fn handle_remote_audio_state(&self, remote_peer_id: &str, enabled: bool) -> Result<()> {
+        self.send(Event::RemoteAudioStateChange(
+            remote_peer_id.to_string(),
+            enabled,
+        ))?;
+        Ok(())
+    }
+
     fn handle_remote_video_state(&self, remote_peer_id: &str, enabled: bool) -> Result<()> {
         self.send(Event::RemoteVideoStateChange(
             remote_peer_id.to_string(),
@@ -1133,8 +1154,6 @@ pub unsafe extern "C" fn receivedOffer(
             age: Duration::from_secs(age_sec),
             sender_device_id,
             receiver_device_id,
-            // A Java desktop client cannot be the primary device.
-            receiver_device_is_primary: false,
             sender_identity_key: sender_key.to_vec_u8(),
             receiver_identity_key: receiver_key.to_vec_u8(),
         },
