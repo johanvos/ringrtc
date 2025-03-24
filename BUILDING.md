@@ -26,6 +26,17 @@ Install rustup, the Rust management system:
 
 We use a pinned nightly toolchain for official builds, specified by our [rust-toolchain file](https://github.com/signalapp/ringrtc/blob/master/rust-toolchain) ([more information](https://rust-lang.github.io/rustup/overrides.html)).
 
+
+### cmake
+
+For Desktop builds, one of ringrtc's dependencies relies on `cmake` being
+available. This can be installed via some package managers, such as:
+
+    brew install cmake  # MacOS dev machine
+
+If it is not available in your system's package manger, see
+https://cmake.org/download/.
+
 #### Android
 
 Install Rust target support for Android via `rustup`:
@@ -52,8 +63,17 @@ Windows, we recommend ensuring that the `msvc` toolchain is installed and used f
 ### Other Dependencies
 #### Android Dependencies
 
-You might need some of these. Of course it is assumed that you have the Android SDK installed,
-along with the NDK, LLDB, and SDK Tools options. A properly configured JDK (such as openjdk-11-jdk) is also assumed. You may also need the following (on Ubuntu):
+You might need some of these. Of course it is assumed that you have the Android
+SDK installed, along with the NDK, LLDB, and SDK Tools options. A properly
+configured JDK (such as openjdk-17-jdk) is also assumed.
+
+For the SDK, install [Android Studio](https://developer.android.com/studio) and
+set up the IDE. For the NDK, set up via the [Android Developer guide](https://developer.android.com/studio/projects/install-ndk).
+On Mac, LLDB should be present by default. On other platforms it should be
+available via your package manager (e.g. `apt`).  The JDK should be installed
+automatically when you install Android Studio, as should the SDK Tools.
+
+You may also need the following (on Ubuntu):
 
     sudo apt install libglib2.0-dev
 
@@ -69,11 +89,7 @@ You may also need coreutils if not yet installed:
 
 #### Electron Dependencies
 
-Install the expected version of Node.jswhich can be found in src/node/.nvmrc. You can use [nvm](https://github.com/nvm-sh/nvm) or just manually install the corresponding version. Make sure you have node and npm installed.
-
-Then install Yarn (if not already):
-
-    npm install --global yarn
+Install the expected version of Node.js which can be found in src/node/.nvmrc. You can use [nvm](https://github.com/nvm-sh/nvm) or just manually install the corresponding version. Make sure you have node and npm installed.
 
 ##### MacOS
 
@@ -117,9 +133,19 @@ You can then add the Signal repo to sync with upstream changes:
     git remote add upstream https://github.com/signalapp/ringrtc.git
 
 ## Building
-
 <i>Important: If building the for the first time, it will take a long time to download
-WebRTC dependencies and then a long time to build WebRTC and RingRTC.</i>
+WebRTC dependencies and then a long time to build WebRTC and RingRTC from scratch.</i>
+
+
+To quickly build RingRTC on Linux or MacOS using only the rust toolchain, you must add the `prebuilt_webrtc` feature. Note this is limited to arm64 and x86_64 architectures:
+
+Examples:
+```sh
+cargo build -p ringrtc --features prebuilt_webrtc
+cargo build -p ringrtc --features prebuilt_webrtc --target aarch64-apple-darwin
+cargo build -p ringrtc --features prebuilt_webrtc --target x86_64-apple-darwin
+cargo build -p ringrtc --features prebuilt_webrtc --target aarch64-unknown-linux-gnu 
+```
 
 ### Android
 

@@ -13,7 +13,7 @@ on:
 jobs:
   check-up-to-date:
     name: Already up to date?
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     if: ${{ github.event_name == 'schedule' && github.repository_owner == 'signalapp' && endsWith(github.repository, '-private') }}
     outputs:
       has-changes: ${{ steps.check.outputs.has-changes }}
@@ -24,7 +24,7 @@ jobs:
 
   android:
     name: Build for Android
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     needs: [check-up-to-date]
     if: ${{ always() && (needs.check-up-to-date.outputs.has-changes || github.event_name != 'schedule') }}
 
@@ -50,7 +50,7 @@ jobs:
   android-emulator-tests:
     name: Android Emulator Tests
     # For hardware acceleration; see https://github.blog/changelog/2023-02-23-hardware-accelerated-android-virtualization-on-actions-windows-and-linux-larger-hosted-runners/
-    runs-on: ubuntu-latest-4-cores
+    runs-on: ubuntu-22.04-4-cores
     needs: [android]
     if: ${{ always() && needs.android.result == 'success' }}
 
@@ -84,7 +84,7 @@ jobs:
 
       # From reactivecircus/android-emulator-runner
       - name: AVD cache
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         id: avd-cache
         with:
           path: |
@@ -94,7 +94,7 @@ jobs:
 
       - name: Create AVD and generate snapshot for caching
         if: steps.avd-cache.outputs.cache-hit != 'true'
-        uses: reactivecircus/android-emulator-runner@6b0df4b0efb23bb0ec63d881db79aefbc976e4b2 # v2.30.1
+        uses: reactivecircus/android-emulator-runner@f0d1ed2dcad93c7479e8b2f2226c83af54494915 # v2.32.0
         with:
           arch: ${{ matrix.arch }}
           api-level: 21
@@ -103,7 +103,7 @@ jobs:
           script: echo "Generated AVD snapshot for caching."
 
       - name: Run tests
-        uses: reactivecircus/android-emulator-runner@6b0df4b0efb23bb0ec63d881db79aefbc976e4b2 # v2.30.1
+        uses: reactivecircus/android-emulator-runner@f0d1ed2dcad93c7479e8b2f2226c83af54494915 # v2.32.0
         with:
           arch: ${{ matrix.arch }}
           api-level: 21
@@ -115,7 +115,7 @@ jobs:
 
   ios:
     name: Build for all iOS targets
-    runs-on: macos-latest
+    runs-on: macos-13
     needs: [check-up-to-date]
     if: ${{ always() && (needs.check-up-to-date.outputs.has-changes || github.event_name != 'schedule') }}
 
@@ -123,12 +123,14 @@ jobs:
     - uses: actions/checkout@v4
     - run: brew install protobuf coreutils # for grealpath
     - run: rustup toolchain install $(cat rust-toolchain) --profile minimal --target x86_64-apple-ios,aarch64-apple-ios,aarch64-apple-ios-sim --component rust-src
+    - run: cargo install cbindgen
+    - run: sudo xcodes select 15.2
     - run: bin/fetch-artifact -p ios
     - run: bin/build-ios --release --ringrtc-only
 
   report_failures:
     name: Report Failures
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     needs: [android, android-emulator-tests, ios]
     if: ${{ failure() && github.event_name == 'schedule' }}
 
@@ -147,3 +149,43 @@ jobs:
             commit_sha: context.sha,
             body: 'Failed Slow Tests: <${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}>'
           })
+
+  sim_profile:
+    name: Run simulator profiling
+    permissions:
+      # Needed for google-github-actions/auth.
+      id-token: 'write'
+      contents: read
+    runs-on: ubuntu-22.04-4-cores
+    steps:
+      - name: Install dependencies
+        run: sudo add-apt-repository ppa:pipewire-debian/pipewire-upstream && sudo apt-get update && sudo apt-get install -y protobuf-compiler libpulse-dev libpulse0 pipewire && systemctl --user daemon-reload && systemctl --user --now enable pipewire pipewire-pulse
+      - uses: actions/checkout@v4
+      - name: gcloud auth
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: 'projects/741367068918/locations/global/workloadIdentityPools/github/providers/github-actions'
+          service_account: 'github-actions@signal-build-artifacts.iam.gserviceaccount.com'
+      - run: rustup toolchain install $(cat rust-toolchain) --profile minimal
+      - name: Install depot tools
+        run: mkdir -p out && git clone --depth 1 https://chromium.googlesource.com/chromium/tools/depot_tools.git out/depot_tools
+      - name: Build call sim
+        run: make call_sim-cli PLATFORM=unix PATH="${PWD}/out/depot_tools:${PATH}"
+      - name: Get media files
+        run: mkdir media && gcloud storage cp gs://calling-ci-resources.signal.org/* media
+        working-directory: call_sim/
+      - name: Run call sim
+        run: cargo run --release -- profiling_suite -b -c --profile
+        working-directory: call_sim/
+      - name: Remove media files
+        run: find test_results \( -name '*.yuv' -o -name '*.wav' -o -name '*.raw' -o -name '*.mp4' \) -exec rm -f {} \;
+        working-directory: call_sim/
+      - name: Compress
+        run: tar czf test_results.tgz test_results/
+        working-directory: call_sim/
+      - name: Upload Perf artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: call_sim/test_results.tgz
+          retention-days: 30

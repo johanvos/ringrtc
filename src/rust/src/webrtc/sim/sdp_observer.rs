@@ -5,16 +5,17 @@
 
 //! WebRTC Simulation Create/Set SessionDescription
 
-use std::ffi::CString;
-use std::os::raw::c_char;
+use std::{ffi::CString, os::raw::c_char, ptr::addr_of};
 
 use libc::{size_t, strdup};
 
-use crate::webrtc;
-use crate::webrtc::sdp_observer::{
-    CreateSessionDescriptionObserver, CreateSessionDescriptionObserverCallbacks,
-    RffiConnectionParametersV4, RffiSrtpKey, SetSessionDescriptionObserver,
-    SetSessionDescriptionObserverCallbacks, SrtpCryptoSuite,
+use crate::{
+    webrtc,
+    webrtc::sdp_observer::{
+        CreateSessionDescriptionObserver, CreateSessionDescriptionObserverCallbacks,
+        RffiConnectionParametersV4, RffiSrtpKey, SetSessionDescriptionObserver,
+        SetSessionDescriptionObserverCallbacks, SrtpCryptoSuite,
+    },
 };
 
 /// Simulation type for SessionDescription.
@@ -63,7 +64,7 @@ pub unsafe fn Rust_createCreateSessionDescriptionObserver(
         webrtc::ptr::Borrowed::from_ptr(
             csd_observer.as_ptr() as *mut CreateSessionDescriptionObserver
         ),
-        webrtc::ptr::Owned::from_ptr(&FAKE_SDP),
+        webrtc::ptr::Owned::from_ptr(addr_of!(FAKE_SDP)),
     );
 
     webrtc::ptr::OwnedRc::from_ptr(&FAKE_CSD_OBSERVER)
@@ -85,7 +86,7 @@ pub unsafe fn Rust_offerFromSdp(
     _sdp: webrtc::ptr::Borrowed<c_char>,
 ) -> webrtc::ptr::Owned<RffiSessionDescription> {
     info!("Rust_offerFromSdp(): ");
-    webrtc::ptr::Owned::from_ptr(&FAKE_SDP_ANSWER)
+    webrtc::ptr::Owned::from_ptr(addr_of!(FAKE_SDP_ANSWER))
 }
 
 #[allow(non_snake_case, clippy::missing_safety_doc)]
@@ -93,7 +94,7 @@ pub unsafe fn Rust_answerFromSdp(
     _sdp: webrtc::ptr::Borrowed<c_char>,
 ) -> webrtc::ptr::Owned<RffiSessionDescription> {
     info!("Rust_answerFromSdp(): ");
-    webrtc::ptr::Owned::from_ptr(&FAKE_SDP_OFFER)
+    webrtc::ptr::Owned::from_ptr(addr_of!(FAKE_SDP_OFFER))
 }
 
 #[allow(non_snake_case, clippy::missing_safety_doc)]
@@ -133,14 +134,13 @@ pub unsafe fn Rust_sessionDescriptionFromV4(
     offer: bool,
     _v4: webrtc::ptr::Borrowed<RffiConnectionParametersV4>,
     _enable_tcc_audio: bool,
-    _enable_red_audio: bool,
     _enable_vp9: bool,
 ) -> webrtc::ptr::Owned<RffiSessionDescription> {
     info!("Rust_sessionDescriptionFromV4(): ");
     if offer {
-        webrtc::ptr::Owned::from_ptr(&FAKE_SDP_OFFER)
+        webrtc::ptr::Owned::from_ptr(addr_of!(FAKE_SDP_OFFER))
     } else {
-        webrtc::ptr::Owned::from_ptr(&FAKE_SDP_ANSWER)
+        webrtc::ptr::Owned::from_ptr(addr_of!(FAKE_SDP_ANSWER))
     }
 }
 
@@ -154,7 +154,7 @@ pub unsafe fn Rust_localDescriptionForGroupCall(
     _remote_demux_ids_len: size_t,
 ) -> webrtc::ptr::Owned<RffiSessionDescription> {
     info!("Rust_localDescriptionForGroupCall(): ");
-    webrtc::ptr::Owned::from_ptr(&FAKE_SDP_OFFER)
+    webrtc::ptr::Owned::from_ptr(addr_of!(FAKE_SDP_OFFER))
 }
 
 #[allow(non_snake_case, clippy::missing_safety_doc)]
@@ -167,7 +167,7 @@ pub unsafe fn Rust_remoteDescriptionForGroupCall(
     _remote_demux_ids_len: size_t,
 ) -> webrtc::ptr::Owned<RffiSessionDescription> {
     info!("Rust_remoteDescriptionForGroupCall(): ");
-    webrtc::ptr::Owned::from_ptr(&FAKE_SDP_ANSWER)
+    webrtc::ptr::Owned::from_ptr(addr_of!(FAKE_SDP_ANSWER))
 }
 
 #[allow(non_snake_case, clippy::missing_safety_doc)]

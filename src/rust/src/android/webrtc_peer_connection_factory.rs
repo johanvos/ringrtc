@@ -5,15 +5,16 @@
 
 //! Re-exports WebRTC JNI interfaces
 
-use jni::objects::{JClass, JObject};
-use jni::sys::jlong;
-use jni::JNIEnv;
+use jni::{
+    objects::{JClass, JObject},
+    sys::jlong,
+    JNIEnv,
+};
 
-use crate::webrtc;
-use crate::webrtc::peer_connection::RffiPeerConnection;
+use crate::{webrtc, webrtc::peer_connection::RffiPeerConnection};
 
 extern "C" {
-    /// Export the nativeCreatepeerconnection() call from the
+    /// Export the nativeCreatePeerConnection() call from the
     /// org.webrtc.PeerConnectionFactory class.
     pub fn Java_org_webrtc_PeerConnectionFactory_nativeCreatePeerConnection(
         env: JNIEnv,

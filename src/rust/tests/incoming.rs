@@ -13,17 +13,16 @@ extern crate log;
 use std::time::Duration;
 
 use prost::Message;
-use ringrtc::common::{
-    units::DataRate, ApplicationEvent, CallConfig, CallId, CallState, ConnectionState, DataMode,
-};
-use ringrtc::core::call_manager::MAX_MESSAGE_AGE;
-use ringrtc::core::group_call;
-use ringrtc::core::signaling;
-use ringrtc::protobuf;
-use ringrtc::webrtc;
-use ringrtc::webrtc::media::MediaStream;
-use ringrtc::webrtc::peer_connection_observer::{
-    NetworkAdapterType, NetworkRoute, TransportProtocol,
+use ringrtc::{
+    common::{
+        units::DataRate, ApplicationEvent, CallConfig, CallId, CallState, ConnectionState, DataMode,
+    },
+    core::{call_manager::MAX_MESSAGE_AGE, group_call, signaling},
+    protobuf, webrtc,
+    webrtc::{
+        media::MediaStream,
+        peer_connection_observer::{NetworkAdapterType, NetworkRoute, TransportProtocol},
+    },
 };
 
 #[macro_use]
@@ -1827,6 +1826,7 @@ fn received_status_before_accepted() {
             signaling::SenderStatus {
                 video_enabled: Some(true),
                 sharing_screen: None,
+                audio_enabled: Some(true),
             },
             1,
         )
@@ -1842,6 +1842,7 @@ fn received_status_before_accepted() {
 
     cm.synchronize().expect(error_line!());
 
+    assert_eq!(context.event_count(ApplicationEvent::RemoteAudioEnable), 0);
     assert_eq!(context.event_count(ApplicationEvent::RemoteVideoEnable), 0);
 
     assert_eq!(
@@ -1856,6 +1857,7 @@ fn received_status_before_accepted() {
 
     cm.synchronize().expect(error_line!());
 
+    assert_eq!(context.event_count(ApplicationEvent::RemoteAudioEnable), 1);
     assert_eq!(context.event_count(ApplicationEvent::RemoteVideoEnable), 1);
 
     assert_eq!(

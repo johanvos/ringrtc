@@ -6,7 +6,6 @@
 import XCTest
 @testable import SignalRingRTC
 import WebRTC
-import SignalCoreKit
 
 import CryptoKit
 import Nimble
@@ -15,7 +14,8 @@ typealias TestCallManager = CallManager<OpaqueCallData, TestDelegate>
 /// Never actually returns nil.
 func createCallManager(_ delegate: TestDelegate) -> TestCallManager? {
     let httpClient = HTTPClient(delegate: delegate)
-    let call_manager = TestCallManager(httpClient: httpClient)
+    // Provide a dummy ADM since no tests are currently measuring audio.
+    let call_manager = TestCallManager(httpClient: httpClient, audioDevice: AudioDeviceModuleForTests())
     call_manager.delegate = delegate
     return call_manager
 }
@@ -131,13 +131,6 @@ final class TestDelegate: CallManagerDelegate & HTTPDelegate {
     var sentCallMessageToGroupMessage: Data?
     var sentCallMessageToGroupUrgency: CallMessageUrgency?
     var sentCallMessageToGroupOverrideRecipients: [UUID]?
-    
-    var sentHttpRequestExpectation = XCTestExpectation(description: "sentHttpRequest")
-    var sentHttpRequestId: UInt32?
-    var sentHttpRequestUrl: String?
-    var sentHttpRequestMethod: HTTPMethod?
-    var sentHttpRequestHeaders: [String: String]?
-    var sentHttpRequestBody: Data?
 
     var didUpdateRingForGroupGroupId: Data?
     var didUpdateRingForGroupRingId: Int64?
@@ -155,6 +148,14 @@ final class TestDelegate: CallManagerDelegate & HTTPDelegate {
     // This is a state variable, but since everything is run on the same
     // main thread, we don't need any protection.
     var canSendICE = false
+
+    init() {
+        Logger.debug("object! TestDelegate created... \(ObjectIdentifier(self))")
+    }
+
+    deinit {
+        Logger.debug("object! TestDelegate destroyed... \(ObjectIdentifier(self))")
+    }
 
     func callManager(_ callManager: CallManager<OpaqueCallData, TestDelegate>, shouldStartCall call: OpaqueCallData, callId: UInt64, isOutgoing: Bool, callMediaType: CallMediaType) {
         Logger.debug("TestDelegate:shouldStartCall")
@@ -299,6 +300,12 @@ final class TestDelegate: CallManagerDelegate & HTTPDelegate {
             eventGeneralEnded = true
             eventEndedDropped = true
 
+        case .remoteAudioEnable:
+            Logger.debug("TestDelegate:remoteAudioEnable")
+
+        case .remoteAudioDisable:
+            Logger.debug("TestDelegate:remoteAudioDisable")
+
         case .remoteVideoEnable:
             Logger.debug("TestDelegate:remoteVideoEnable")
 
@@ -342,14 +349,6 @@ final class TestDelegate: CallManagerDelegate & HTTPDelegate {
 
     func callManager(_ callManager: CallManager<OpaqueCallData, TestDelegate>, onLowBandwidthForVideoFor call: OpaqueCallData, recovered: Bool) {
         Logger.debug("TestDelegate:onLowBandwidthForVideoFor - \(recovered)")
-    }
-
-    func callManager(_ callManager: CallManager<OpaqueCallData, TestDelegate>, onReactions call: OpaqueCallData, reactions: [Reaction]) {
-        Logger.debug("TestDelegate:onReactions - \(reactions)")
-    }
-
-    func callManager(_ callManager: CallManager<OpaqueCallData, TestDelegate>, onRaisedHands call: OpaqueCallData, raisedHands: [UInt32]) {
-        Logger.debug("TestDelegate:onRaisedHands - \(raisedHands)")
     }
 
     func callManager(_ callManager: CallManager<OpaqueCallData, TestDelegate>, shouldSendOffer callId: UInt64, call: OpaqueCallData, destinationDeviceId: UInt32?, opaque: Data, callMediaType: CallMediaType) {
@@ -427,6 +426,7 @@ final class TestDelegate: CallManagerDelegate & HTTPDelegate {
         shouldSendIceCandidatesInvoked = false
     }
 
+    @MainActor
     func tryToSendIceCandidates(callId: UInt64, destinationDeviceId: UInt32?, candidates: [Data]) {
         if destinationDeviceId != nil {
             Logger.debug("callId: \(callId) destinationDeviceId: \(destinationDeviceId ?? 0) candidates.count: \(candidates.count)")
@@ -582,18 +582,23 @@ final class TestDelegate: CallManagerDelegate & HTTPDelegate {
         sentCallMessageToGroupUrgency = urgency
         sentCallMessageToGroupOverrideRecipients = overrideRecipients
     }
+
+    private var sendRequestCallbacks: [(UInt32, HTTPRequest) -> Void] = []
+
+    func onSendRequest(callback: @escaping (UInt32, HTTPRequest) -> Void) {
+        sendRequestCallbacks.append(callback)
+    }
+
     func sendRequest(requestId: UInt32, request: HTTPRequest) {
         Logger.debug("TestDelegate:shouldSendHttpRequest")
         generalInvocationDetected = true
 
         shouldSendHttpRequestInvoked = true
 
-        sentHttpRequestExpectation.fulfill()
-        sentHttpRequestId = requestId
-        sentHttpRequestUrl = request.url
-        sentHttpRequestMethod = request.method
-        sentHttpRequestHeaders = request.headers
-        sentHttpRequestBody = request.body
+        if !sendRequestCallbacks.isEmpty {
+            let callback = sendRequestCallbacks.removeFirst()
+            callback(requestId, request)
+        }
 
         Logger.debug("requestId: \(requestId)")
         Logger.debug("url: \(request.url)")
@@ -644,33 +649,81 @@ final class TestDelegate: CallManagerDelegate & HTTPDelegate {
 }
 
 extension XCTestCase {
-    // Helper function to delay, without blocking the main thread.
+    // Helper function to delay, without blocking the main thread. Delay intervals should be less than 30 seconds.
     func delay(interval: TimeInterval) {
+        XCTAssertLessThan(interval, 30.0, "The delay interval must be less than 30 seconds")
         var timerFlag = false
         Timer.scheduledTimer(withTimeInterval: interval, repeats: false, block: { (_) in
             timerFlag = true
         })
-        // Wait for the timer to expire, and give expectation timeout in excess of delay.
-        expect(timerFlag).toEventually(equal(true), timeout: .milliseconds(Int((interval + 1) * 1000)))
+        expect(timerFlag).toEventually(equal(true), timeout: .seconds(30))
     }
 }
 
 class SignalRingRTCTests: XCTestCase {
+    // Use a static stored property for one-time initialization.
+    static let loggingInitialized: Bool = {
+        struct LogToNSLog: RingRTCLogger {
+            func log(level: RingRTCLogLevel, file: String, function: String, line: UInt32, message: String) {
+                let abbreviation: String
+                switch level {
+                case .error: abbreviation = "E"
+                case .warn: abbreviation = "W"
+                case .info: abbreviation = "I"
+                case .debug: abbreviation = "D"
+                case .trace: abbreviation = "T"
+                }
+                if file == "" && function == "" && line == 0 {
+                    NSLog("%@ %@", abbreviation, message)
+                } else {
+                    NSLog("%@ [%@:%u %@]: %@", abbreviation, file, line, function, message)
+                }
+            }
+
+            func flush() {}
+        }
+
+        let maxLogLevel: RingRTCLogLevel
+        if let overrideLogLevelString = ProcessInfo().environment["RINGRTC_MAX_LOG_LEVEL"],
+           let overrideLogLevelRaw = UInt8(overrideLogLevelString),
+           let overrideLogLevel = RingRTCLogLevel(rawValue: overrideLogLevelRaw) {
+            maxLogLevel = overrideLogLevel
+        } else {
+            maxLogLevel = .trace
+        }
+        LogToNSLog().setUpRingRTCLogging(maxLogLevel: maxLogLevel)
+
+        return true
+    }()
 
     override class func setUp() {
         // Initialize logging, direct it to the console.
-        DDLog.add(DDOSLogger.sharedInstance)
+        precondition(self.loggingInitialized)
+
+        // Give a large timeout so that test cases wait long enough across different environments.
+        Nimble.PollingDefaults.timeout = .seconds(15)
+        Logger.info("Test: Nimble.PollingDefaults.timeout: \(Nimble.PollingDefaults.timeout)")
 
         // Allow as many file descriptors as possible.
         var limits = rlimit()
         if getrlimit(RLIMIT_NOFILE, &limits) == 0 {
             limits.rlim_cur = min(rlim_t(OPEN_MAX), limits.rlim_max)
             if setrlimit(RLIMIT_NOFILE, &limits) == 0 {
-                Logger.info("number of open files allowed: \(limits.rlim_cur)")
+                Logger.info("Test: Number of open files allowed: \(limits.rlim_cur)")
             } else {
-                Logger.error("failed to allow more open files: " + String(cString: strerror(errno)))
+                Logger.error("Test: Failed to allow more open files: " + String(cString: strerror(errno)))
             }
         }
+    }
+
+    override func tearDown() {
+        // Give a slight delay after every test to give logs time to catch up
+        // and resources to be released.
+        delay(interval: 1.0)
+
+        Logger.debug("Test: Exiting test function...")
+
+        super.tearDown()
     }
 
     func testMinimalLifetime() {
@@ -683,10 +736,9 @@ class SignalRingRTCTests: XCTestCase {
         let delegate = TestDelegate()
         var callManager = createCallManager(delegate)
         expect(delegate.generalInvocationDetected).to(equal(false))
-        callManager = nil
 
-        // Delay the end of the test to give Logger time to catch up.
-        delay(interval: 0.1)
+        // Cleanup
+        callManager = nil
     }
 
     func testMinimalLifetimeMulti() {
@@ -721,9 +773,6 @@ class SignalRingRTCTests: XCTestCase {
         expect(callManager).toNot(beNil())
         expect(delegate.generalInvocationDetected).to(equal(false))
         callManager = nil
-
-        // Delay the end of the test to give Logger time to catch up.
-        delay(interval: 0.1)
     }
 
     func testShortLife() {
@@ -743,17 +792,11 @@ class SignalRingRTCTests: XCTestCase {
         // We didn't do anything, so there should not have been any notifications.
         expect(delegate.generalInvocationDetected).to(equal(false))
 
-        // Release the Call Manager.
+        // Cleanup
         callManager = nil
-
-        // It should have blocked, so we can move on.
-
-        expect(delegate.generalInvocationDetected).to(equal(false))
-
-        // Delay the end of the test to give Logger time to catch up.
-        delay(interval: 0.1)
     }
 
+    @MainActor
     func outgoingTesting(dataMode: DataMode) {
         Logger.debug("Test: Outgoing Call...")
 
@@ -783,7 +826,7 @@ class SignalRingRTCTests: XCTestCase {
             return
         }
 
-        expect(delegate.startOutgoingCallInvoked).toEventually(equal(true), timeout: .seconds(1))
+        expect(delegate.startOutgoingCallInvoked).toEventually(equal(true))
         delegate.startOutgoingCallInvoked = false
 
         let iceServers = [RTCIceServer(urlStrings: ["stun:stun.l.google.com:19302"])]
@@ -799,7 +842,7 @@ class SignalRingRTCTests: XCTestCase {
             return
         }
 
-        expect(delegate.shouldSendOfferInvoked).toEventually(equal(true), timeout: .seconds(2))
+        expect(delegate.shouldSendOfferInvoked).toEventually(equal(true))
         delegate.shouldSendOfferInvoked = false
 
         // We've sent an offer, so we should see some Ice candidates.
@@ -815,7 +858,7 @@ class SignalRingRTCTests: XCTestCase {
         }
 
         // We don't care how many though. No need to reset the flag.
-        expect(delegate.shouldSendIceCandidatesInvoked).toEventually(equal(true), timeout: .seconds(1))
+        expect(delegate.shouldSendIceCandidatesInvoked).toEventually(equal(true))
 
         // Delay to see if we can catch all Ice candidates being sent...
         delay(interval: 2.0)
@@ -844,23 +887,21 @@ class SignalRingRTCTests: XCTestCase {
             return
         }
 
-        // Delay the end of the test to give Logger time to catch up.
-        delay(interval: 0.1)
-
-        // Release the Call Manager.
+        // Cleanup
         callManager = nil
-
-        Logger.debug("Test: Exiting test function...")
     }
 
+    @MainActor
     func testOutgoingNormal() {
         outgoingTesting(dataMode: .normal)
     }
 
+    @MainActor
     func testOutgoingLow() {
         outgoingTesting(dataMode: .low)
     }
 
+    @MainActor
     func testOutgoingSendOfferFail() {
         Logger.debug("Test: Outgoing Call Send Offer Fail...")
 
@@ -890,7 +931,7 @@ class SignalRingRTCTests: XCTestCase {
             return
         }
 
-        expect(delegate.startOutgoingCallInvoked).toEventually(equal(true), timeout: .seconds(1))
+        expect(delegate.startOutgoingCallInvoked).toEventually(equal(true))
         delegate.startOutgoingCallInvoked = false
 
         let iceServers = [RTCIceServer(urlStrings: ["stun:stun.l.google.com:19302"])]
@@ -909,22 +950,21 @@ class SignalRingRTCTests: XCTestCase {
             return
         }
 
-        expect(delegate.shouldSendOfferInvoked).toEventually(equal(true), timeout: .seconds(1))
+        expect(delegate.shouldSendOfferInvoked).toEventually(equal(true))
 
         // We should get the endedSignalingFailure event.
-        expect(delegate.eventEndedSignalingFailure).toEventually(equal(true), timeout: .seconds(1))
+        expect(delegate.eventEndedSignalingFailure).toEventually(equal(true))
 
         // We expect to get a hangup, because, the Call Manager doesn't make
         // any assumptions that the offer didn't really actually get out.
         // Just to be sure, it will send the hangup...
-        expect(delegate.shouldSendHangupNormalInvoked).toEventually(equal(true), timeout: .seconds(1))
+        expect(delegate.shouldSendHangupNormalInvoked).toEventually(equal(true))
 
-        // Release the Call Manager.
+        // Cleanup
         callManager = nil
-
-        Logger.debug("Test: Exiting test function...")
     }
 
+    @MainActor
     func testIncoming() {
         Logger.debug("Test: Incoming Call...")
 
@@ -950,13 +990,13 @@ class SignalRingRTCTests: XCTestCase {
             // outside this block.
             let call = OpaqueCallData(value: delegate.expectedValue, remote: delegate.expectedValue)
 
-            try callManager?.receivedOffer(call: call, sourceDevice: sourceDevice, callId: callId, opaque: exampleV4V3V2Offer, messageAgeSec: 0, callMediaType: .audioCall, localDevice: localDevice, isLocalDevicePrimary: true, senderIdentityKey: dummyRemoteIdentityKey, receiverIdentityKey: dummyLocalIdentityKey)
+            try callManager?.receivedOffer(call: call, sourceDevice: sourceDevice, callId: callId, opaque: exampleV4V3V2Offer, messageAgeSec: 0, callMediaType: .audioCall, localDevice: localDevice, senderIdentityKey: dummyRemoteIdentityKey, receiverIdentityKey: dummyLocalIdentityKey)
         } catch {
             XCTFail("Call Manager receivedOffer() failed: \(error)")
             return
         }
 
-        expect(delegate.startIncomingCallInvoked).toEventually(equal(true), timeout: .seconds(1))
+        expect(delegate.startIncomingCallInvoked).toEventually(equal(true))
         delegate.startIncomingCallInvoked = false
 
         let iceServers = [RTCIceServer(urlStrings: ["stun:stun.l.google.com:19302"])]
@@ -970,10 +1010,7 @@ class SignalRingRTCTests: XCTestCase {
             return
         }
 
-        // Long timeout for this one specifically.
-        // We're not sure why GitHub Actions sometimes takes a long time on this one,
-        // but it does.
-        expect(delegate.shouldSendAnswerInvoked).toEventually(equal(true), timeout: .seconds(5))
+        expect(delegate.shouldSendAnswerInvoked).toEventually(equal(true))
         delegate.shouldSendAnswerInvoked = false
 
         expect(delegate.recentCallId).to(equal(callId))
@@ -981,7 +1018,7 @@ class SignalRingRTCTests: XCTestCase {
         // We've sent an answer, so we should see some Ice Candidates.
 
         // We don't care how many though. No need to reset the flag.
-        expect(delegate.shouldSendIceCandidatesInvoked).toEventually(equal(true), timeout: .seconds(1))
+        expect(delegate.shouldSendIceCandidatesInvoked).toEventually(equal(true))
 
         // Delay to see if we can catch all Ice candidates being sent..
         delay(interval: 2.0)
@@ -1006,15 +1043,11 @@ class SignalRingRTCTests: XCTestCase {
             return
         }
 
-        // Delay the end of the test to give Logger time to catch up.
-        delay(interval: 0.1)
-
-        // Release the Call Manager.
+        // Cleanup
         callManager = nil
-
-        Logger.debug("Test: Exiting test function...")
     }
 
+    @MainActor
     func testOutgoingMultiHangupMin() {
         Logger.debug("Test: MultiHangup Minimum...")
 
@@ -1053,15 +1086,11 @@ class SignalRingRTCTests: XCTestCase {
             }
         }
 
-        // Add a small delay before closing.
-        delay(interval: 0.05)
-
-        // Release the Call Manager.
+        // Cleanup
         callManager = nil
-
-        Logger.debug("Test: Exiting test function...")
     }
 
+    @MainActor
     func testOutgoingMultiHangup() {
         Logger.debug("Test: MultiHangup...")
 
@@ -1090,7 +1119,7 @@ class SignalRingRTCTests: XCTestCase {
                 return
             }
 
-            expect(delegate.startOutgoingCallInvoked).toEventually(equal(true), timeout: .seconds(1))
+            expect(delegate.startOutgoingCallInvoked).toEventually(equal(true))
             delegate.startOutgoingCallInvoked = false
 
             // Try hanging up...
@@ -1103,15 +1132,11 @@ class SignalRingRTCTests: XCTestCase {
             }
         }
 
-        // Add a small delay before closing.
-        delay(interval: 0.05)
-
-        // Release the Call Manager.
+        // Cleanup
         callManager = nil
-
-        Logger.debug("Test: Exiting test function...")
     }
 
+    @MainActor
     func testOutgoingMultiHangupProceed() {
         Logger.debug("Test: MultiHangup with Proceed...")
 
@@ -1142,7 +1167,7 @@ class SignalRingRTCTests: XCTestCase {
                 return
             }
 
-            expect(delegate.startOutgoingCallInvoked).toEventually(equal(true), timeout: .seconds(1))
+            expect(delegate.startOutgoingCallInvoked).toEventually(equal(true))
             delegate.startOutgoingCallInvoked = false
 
             let iceServers = [RTCIceServer(urlStrings: ["stun:stun.l.google.com:19302"])]
@@ -1166,26 +1191,21 @@ class SignalRingRTCTests: XCTestCase {
                 XCTFail("Call Manager hangup() failed: \(error)")
                 return
             }
+
+            // Give the hangup some time.
+            delay(interval: 0.1)
         }
-
-        Logger.debug("Test: Waiting to end...")
-
-        // Add a small delay before closing.
-        delay(interval: 0.1)
 
         // We call hangup immediately, but internally no offer should have gone out.
         // No hangup should have been sent for any of the tests either.
         expect(delegate.shouldSendOfferInvoked).to(equal(false))
         expect(delegate.shouldSendHangupNormalInvoked).to(equal(false))
 
-        Logger.debug("Test: Now ending...")
-
-        // Release the Call Manager.
+        // Cleanup
         callManager = nil
-
-        Logger.debug("Test: Exiting test function...")
     }
 
+    @MainActor
     func testOutgoingMultiHangupProceedOffer() {
         Logger.debug("Test: MultiHangup with Proceed until offer sent...")
 
@@ -1216,7 +1236,7 @@ class SignalRingRTCTests: XCTestCase {
                 return
             }
 
-            expect(delegate.startOutgoingCallInvoked).toEventually(equal(true), timeout: .seconds(1))
+            expect(delegate.startOutgoingCallInvoked).toEventually(equal(true))
             delegate.startOutgoingCallInvoked = false
 
             let iceServers = [RTCIceServer(urlStrings: ["stun:stun.l.google.com:19302"])]
@@ -1232,7 +1252,7 @@ class SignalRingRTCTests: XCTestCase {
                 return
             }
 
-            expect(delegate.shouldSendOfferInvoked).toEventually(equal(true), timeout: .seconds(2))
+            expect(delegate.shouldSendOfferInvoked).toEventually(equal(true))
             delegate.shouldSendOfferInvoked = false
 
             // Try hanging up...
@@ -1244,23 +1264,18 @@ class SignalRingRTCTests: XCTestCase {
                 return
             }
 
-            expect(delegate.shouldSendHangupNormalInvoked).toEventually(equal(true), timeout: .seconds(2))
+            // Give the hangup some time.
+            delay(interval: 0.1)
+
+            expect(delegate.shouldSendHangupNormalInvoked).toEventually(equal(true))
             delegate.shouldSendHangupNormalInvoked = false
         }
 
-        Logger.debug("Test: Waiting to end...")
-
-        // Add a small delay before closing.
-        delay(interval: 0.5)
-
-        Logger.debug("Test: Now ending...")
-
-        // Release the Call Manager.
+        // Cleanup
         callManager = nil
-
-        Logger.debug("Test: Exiting test function...")
     }
 
+    @MainActor
     func testIncomingQuickHangupNoDelay() {
         Logger.debug("Test: Incoming Call Offer with quick Hangup No Delay...")
 
@@ -1292,7 +1307,7 @@ class SignalRingRTCTests: XCTestCase {
             // outside this block.
             let call = OpaqueCallData(value: delegate.expectedValue, remote: delegate.expectedValue)
 
-            try callManager?.receivedOffer(call: call, sourceDevice: sourceDevice, callId: callId, opaque: exampleV4V3V2Offer, messageAgeSec: 0, callMediaType: .audioCall, localDevice: localDevice, isLocalDevicePrimary: true, senderIdentityKey: dummyRemoteIdentityKey, receiverIdentityKey: dummyLocalIdentityKey)
+            try callManager?.receivedOffer(call: call, sourceDevice: sourceDevice, callId: callId, opaque: exampleV4V3V2Offer, messageAgeSec: 0, callMediaType: .audioCall, localDevice: localDevice, senderIdentityKey: dummyRemoteIdentityKey, receiverIdentityKey: dummyLocalIdentityKey)
         } catch {
             XCTFail("Call Manager receivedOffer() failed: \(error)")
             return
@@ -1307,7 +1322,7 @@ class SignalRingRTCTests: XCTestCase {
             return
         }
 
-        // Wait a half second to see what events were fired.
+        // Wait to see what events were fired.
         delay(interval: 0.5)
 
         expect(delegate.eventEndedRemoteHangup).to(equal(true))
@@ -1315,12 +1330,11 @@ class SignalRingRTCTests: XCTestCase {
         // shouldSendAnswerInvoked should NOT be invoked!
         expect(delegate.shouldSendAnswerInvoked).notTo(equal(true))
 
-        // Release the Call Manager.
+        // Cleanup
         callManager = nil
-
-        Logger.debug("Test: Exiting test function...")
     }
 
+    @MainActor
     func testIncomingQuickHangupWithDelay() {
         Logger.debug("Test: Incoming Call Offer with quick Hangup with Delay...")
 
@@ -1352,7 +1366,7 @@ class SignalRingRTCTests: XCTestCase {
             // outside this block.
             let call = OpaqueCallData(value: delegate.expectedValue, remote: delegate.expectedValue)
 
-            try callManager?.receivedOffer(call: call, sourceDevice: sourceDevice, callId: callId, opaque: exampleV4V3V2Offer, messageAgeSec: 0, callMediaType: .audioCall, localDevice: localDevice, isLocalDevicePrimary: true, senderIdentityKey: dummyRemoteIdentityKey, receiverIdentityKey: dummyLocalIdentityKey)
+            try callManager?.receivedOffer(call: call, sourceDevice: sourceDevice, callId: callId, opaque: exampleV4V3V2Offer, messageAgeSec: 0, callMediaType: .audioCall, localDevice: localDevice, senderIdentityKey: dummyRemoteIdentityKey, receiverIdentityKey: dummyLocalIdentityKey)
         } catch {
             XCTFail("Call Manager receivedOffer() failed: \(error)")
             return
@@ -1370,7 +1384,7 @@ class SignalRingRTCTests: XCTestCase {
             return
         }
 
-        // Wait a half second to see what events were fired.
+        // Wait to see what events were fired.
         delay(interval: 0.5)
 
         expect(delegate.eventEndedRemoteHangup).to(equal(true))
@@ -1381,12 +1395,11 @@ class SignalRingRTCTests: XCTestCase {
         // shouldSendAnswerInvoked should be invoked!
         expect(delegate.shouldSendAnswerInvoked).to(equal(true))
 
-        // Release the Call Manager.
+        // Cleanup
         callManager = nil
-
-        Logger.debug("Test: Exiting test function...")
     }
 
+    @MainActor
     func multiCallTesting(loopIterations: Int) {
         Logger.debug("Test: MultiCall...")
 
@@ -1439,7 +1452,7 @@ class SignalRingRTCTests: XCTestCase {
                 return
             }
 
-            expect(delegateCaller.startOutgoingCallInvoked).toEventually(equal(true), timeout: .seconds(1))
+            expect(delegateCaller.startOutgoingCallInvoked).toEventually(equal(true))
             delegateCaller.startOutgoingCallInvoked = false
 
             // This may not be proper...
@@ -1453,7 +1466,7 @@ class SignalRingRTCTests: XCTestCase {
                 return
             }
 
-            expect(delegateCaller.shouldSendOfferInvoked).toEventually(equal(true), timeout: .seconds(1))
+            expect(delegateCaller.shouldSendOfferInvoked).toEventually(equal(true))
             delegateCaller.shouldSendOfferInvoked = false
 
             // We sent the offer! Let's give it to our callee!
@@ -1470,7 +1483,7 @@ class SignalRingRTCTests: XCTestCase {
                     return
                 }
 
-                try callManagerCallee?.receivedOffer(call: call, sourceDevice: sourceDevice, callId: callId, opaque: opaque, messageAgeSec: 0, callMediaType: .audioCall, localDevice: calleeLocalDevice, isLocalDevicePrimary: true, senderIdentityKey: dummyRemoteIdentityKey, receiverIdentityKey: dummyLocalIdentityKey)
+                try callManagerCallee?.receivedOffer(call: call, sourceDevice: sourceDevice, callId: callId, opaque: opaque, messageAgeSec: 0, callMediaType: .audioCall, localDevice: calleeLocalDevice, senderIdentityKey: dummyRemoteIdentityKey, receiverIdentityKey: dummyLocalIdentityKey)
             } catch {
                 XCTFail("Call Manager receivedOffer() failed: \(error)")
                 return
@@ -1482,7 +1495,7 @@ class SignalRingRTCTests: XCTestCase {
             delegateCaller.canSendICE = true
             delegateCaller.tryToSendIceCandidates(callId: callId, destinationDeviceId: nil, candidates: [])
 
-            expect(delegateCallee.startIncomingCallInvoked).toEventually(equal(true), timeout: .seconds(1))
+            expect(delegateCallee.startIncomingCallInvoked).toEventually(equal(true))
             delegateCallee.startIncomingCallInvoked = false
 
             do {
@@ -1493,7 +1506,7 @@ class SignalRingRTCTests: XCTestCase {
                 return
             }
 
-            expect(delegateCallee.shouldSendAnswerInvoked).toEventually(equal(true), timeout: .seconds(1))
+            expect(delegateCallee.shouldSendAnswerInvoked).toEventually(equal(true))
             delegateCallee.shouldSendAnswerInvoked = false
 
             expect(delegateCallee.recentCallId).to(equal(callId))
@@ -1515,9 +1528,9 @@ class SignalRingRTCTests: XCTestCase {
             }
 
             // Should get to ringing.
-            expect(delegateCaller.eventRemoteRingingInvoked).toEventually(equal(true), timeout: .seconds(2))
+            expect(delegateCaller.eventRemoteRingingInvoked).toEventually(equal(true))
             delegateCaller.eventRemoteRingingInvoked = false
-            expect(delegateCallee.eventLocalRingingInvoked).toEventually(equal(true), timeout: .seconds(1))
+            expect(delegateCallee.eventLocalRingingInvoked).toEventually(equal(true))
             delegateCallee.eventLocalRingingInvoked = false
 
             // Now we want to hangup the callee and start anew.
@@ -1529,7 +1542,7 @@ class SignalRingRTCTests: XCTestCase {
                 return
             }
 
-            expect(delegateCaller.shouldSendHangupNormalInvoked).toEventually(equal(true), timeout: .seconds(1))
+            expect(delegateCaller.shouldSendHangupNormalInvoked).toEventually(equal(true))
             delegateCaller.shouldSendHangupNormalInvoked = false
 
             do {
@@ -1540,31 +1553,29 @@ class SignalRingRTCTests: XCTestCase {
                 return
             }
 
-            expect(delegateCallee.eventEndedRemoteHangup).toEventually(equal(true), timeout: .seconds(1))
+            expect(delegateCallee.eventEndedRemoteHangup).toEventually(equal(true))
             delegateCallee.eventEndedRemoteHangup = false
+
+            delay(interval: 1.0)
 
             Logger.debug("Test: End of test loop...")
         }
 
         Logger.debug("Test: Done with test loop...")
 
-        // Delay the end of the test to give Logger time to catch up.
-        delay(interval: 1.0)
-
-        // Release the Call Managers (but there still might be references in the delegates!).
+        // Cleanup
+        delegateCaller.callManagerICE = []
+        delegateCallee.callManagerICE = []
         callManagerCaller = nil
         callManagerCallee = nil
-
-        // See what clears up after closing the Call Manager...
-        delay(interval: 1.0)
-
-        Logger.debug("Test: Exiting test function...")
     }
 
+    @MainActor
     func testMultiCallOpaque() {
         multiCallTesting(loopIterations: 2)
     }
 
+    @MainActor
     func testMultiCallFastIceCheck() {
         Logger.debug("Test: MultiCall check that immediate ICE message is handled...")
 
@@ -1599,7 +1610,7 @@ class SignalRingRTCTests: XCTestCase {
             return
         }
 
-        expect(delegateCaller.startOutgoingCallInvoked).toEventually(equal(true), timeout: .seconds(1))
+        expect(delegateCaller.startOutgoingCallInvoked).toEventually(equal(true))
         delegateCaller.startOutgoingCallInvoked = false
 
         // For now, these variables will be common to both Call Managers.
@@ -1617,10 +1628,10 @@ class SignalRingRTCTests: XCTestCase {
         }
 
         // Wait for the offer.
-        expect(delegateCaller.shouldSendOfferInvoked).toEventually(equal(true), timeout: .seconds(1))
+        expect(delegateCaller.shouldSendOfferInvoked).toEventually(equal(true))
 
         // Wait for the initial set of ICE candidates.
-        expect(delegateCaller.shouldSendIceCandidatesInvoked).toEventually(equal(true), timeout: .seconds(1))
+        expect(delegateCaller.shouldSendIceCandidatesInvoked).toEventually(equal(true))
 
         // We have an Offer and ICE candidates. Simulate them coming in rapid
         // succession, to ensure that the Offer is handled and the ICE candidates
@@ -1641,7 +1652,7 @@ class SignalRingRTCTests: XCTestCase {
             }
 
             // Send the ICE candidates right after the offer.
-            try callManagerCallee?.receivedOffer(call: call, sourceDevice: sourceDevice, callId: callId, opaque: opaque, messageAgeSec: 0, callMediaType: .audioCall, localDevice: calleeLocalDevice, isLocalDevicePrimary: true, senderIdentityKey: dummyRemoteIdentityKey, receiverIdentityKey: dummyLocalIdentityKey)
+            try callManagerCallee?.receivedOffer(call: call, sourceDevice: sourceDevice, callId: callId, opaque: opaque, messageAgeSec: 0, callMediaType: .audioCall, localDevice: calleeLocalDevice, senderIdentityKey: dummyRemoteIdentityKey, receiverIdentityKey: dummyLocalIdentityKey)
             try callManagerCallee?.receivedIceCandidates(sourceDevice: sourceDevice, callId: callId, candidates: delegateCaller.sentIceCandidates)
         } catch {
             XCTFail("Call Manager receivedOffer() failed: \(error)")
@@ -1649,7 +1660,7 @@ class SignalRingRTCTests: XCTestCase {
         }
 
         // Continue on with the call to see it get a connection.
-        expect(delegateCallee.startIncomingCallInvoked).toEventually(equal(true), timeout: .seconds(1))
+        expect(delegateCallee.startIncomingCallInvoked).toEventually(equal(true))
         delegateCallee.startIncomingCallInvoked = false
 
         do {
@@ -1660,7 +1671,7 @@ class SignalRingRTCTests: XCTestCase {
             return
         }
 
-        expect(delegateCallee.shouldSendAnswerInvoked).toEventually(equal(true), timeout: .seconds(2))
+        expect(delegateCallee.shouldSendAnswerInvoked).toEventually(equal(true))
         delegateCallee.shouldSendAnswerInvoked = false
 
         expect(delegateCallee.recentCallId).to(equal(callId))
@@ -1686,7 +1697,7 @@ class SignalRingRTCTests: XCTestCase {
 
         // We've sent an answer, so we should see some Ice Candidates.
         // We don't care how many though. No need to reset the flag.
-        expect(delegateCallee.shouldSendIceCandidatesInvoked).toEventually(equal(true), timeout: .seconds(1))
+        expect(delegateCallee.shouldSendIceCandidatesInvoked).toEventually(equal(true))
 
         // Give Ice candidates to one another.
 
@@ -1699,19 +1710,12 @@ class SignalRingRTCTests: XCTestCase {
         }
 
         // We should get to the ringing state in each client.
-        expect(delegateCaller.eventRemoteRingingInvoked).toEventually(equal(true), timeout: .seconds(2))
-        expect(delegateCallee.eventLocalRingingInvoked).toEventually(equal(true), timeout: .seconds(1))
+        expect(delegateCaller.eventRemoteRingingInvoked).toEventually(equal(true))
+        expect(delegateCallee.eventLocalRingingInvoked).toEventually(equal(true))
 
-        delay(interval: 1.0)
-
-        // Release the Call Managers.
+        // Cleanup
         callManagerCaller = nil
         callManagerCallee = nil
-
-        // See what clears up after closing the Call Manager...
-        delay(interval: 1.0)
-
-        Logger.debug("Test: Exiting test function...")
     }
 
     enum GlareScenario {
@@ -1725,6 +1729,7 @@ class SignalRingRTCTests: XCTestCase {
         case equal
     }
 
+    @MainActor
     func glareTesting(scenario: GlareScenario, condition: GlareCondition) {
         Logger.debug("Test: Testing glare for scenario: \(scenario) and condition: \(condition)...")
 
@@ -1764,7 +1769,7 @@ class SignalRingRTCTests: XCTestCase {
             return
         }
 
-        expect(delegateA.startOutgoingCallInvoked).toEventually(equal(true), timeout: .seconds(1))
+        expect(delegateA.startOutgoingCallInvoked).toEventually(equal(true))
         delegateA.startOutgoingCallInvoked = false
         let callIdAtoB = delegateA.recentCallId
 
@@ -1776,7 +1781,7 @@ class SignalRingRTCTests: XCTestCase {
             return
         }
 
-        expect(delegateA.shouldSendOfferInvoked).toEventually(equal(true), timeout: .seconds(1))
+        expect(delegateA.shouldSendOfferInvoked).toEventually(equal(true))
         delegateA.shouldSendOfferInvoked = false
 
         // B starts to call A.
@@ -1789,7 +1794,7 @@ class SignalRingRTCTests: XCTestCase {
             return
         }
 
-        expect(delegateB.startOutgoingCallInvoked).toEventually(equal(true), timeout: .seconds(1))
+        expect(delegateB.startOutgoingCallInvoked).toEventually(equal(true))
         delegateB.startOutgoingCallInvoked = false
         let callIdBtoA = delegateB.recentCallId
 
@@ -1803,7 +1808,7 @@ class SignalRingRTCTests: XCTestCase {
                 return
             }
 
-            expect(delegateB.shouldSendOfferInvoked).toEventually(equal(true), timeout: .seconds(1))
+            expect(delegateB.shouldSendOfferInvoked).toEventually(equal(true))
             delegateB.shouldSendOfferInvoked = false
         }
 
@@ -1830,7 +1835,7 @@ class SignalRingRTCTests: XCTestCase {
                 return
             }
 
-            try callManagerB?.receivedOffer(call: call, sourceDevice: sourceDevice, callId: callIdAtoBOverride, opaque: opaque, messageAgeSec: 0, callMediaType: .audioCall, localDevice: localDevice, isLocalDevicePrimary: true, senderIdentityKey: dummyLocalIdentityKey, receiverIdentityKey: dummyRemoteIdentityKey)
+            try callManagerB?.receivedOffer(call: call, sourceDevice: sourceDevice, callId: callIdAtoBOverride, opaque: opaque, messageAgeSec: 0, callMediaType: .audioCall, localDevice: localDevice, senderIdentityKey: dummyLocalIdentityKey, receiverIdentityKey: dummyRemoteIdentityKey)
         } catch {
             XCTFail("Call Manager receivedOffer() failed: \(error)")
             return
@@ -1838,37 +1843,37 @@ class SignalRingRTCTests: XCTestCase {
 
         switch condition {
         case .winner:
-            expect(delegateB.eventReceivedOfferWithGlare).toEventually(equal(true), timeout: .seconds(1))
+            expect(delegateB.eventReceivedOfferWithGlare).toEventually(equal(true))
             delegateB.eventReceivedOfferWithGlare = false
 
             expect(delegateB.shouldSendBusyInvoked).to(equal(false))
             expect(delegateB.eventEndedRemoteGlare).to(equal(false))
         case .loser:
-            expect(delegateB.eventEndedRemoteGlare).toEventually(equal(true), timeout: .seconds(1))
+            expect(delegateB.eventEndedRemoteGlare).toEventually(equal(true))
             delegateB.eventEndedRemoteGlare = false
 
             if scenario == .afterProceed {
                 // Hangup is for the outgoing offer.
-                expect(delegateB.shouldSendHangupNormalInvoked).toEventually(equal(true), timeout: .seconds(1))
+                expect(delegateB.shouldSendHangupNormalInvoked).toEventually(equal(true))
                 delegateB.shouldSendHangupNormalInvoked = false
             }
 
             expect(delegateB.eventReceivedOfferWhileActive).to(equal(false))
             expect(delegateB.shouldSendBusyInvoked).to(equal(false))
         case .equal:
-            expect(delegateB.eventEndedRemoteGlare).toEventually(equal(true), timeout: .seconds(1))
+            expect(delegateB.eventEndedRemoteGlare).toEventually(equal(true))
             delegateB.eventEndedRemoteGlare = false
 
             if scenario == .afterProceed {
                 // Hangup is for the outgoing offer.
-                expect(delegateB.shouldSendHangupNormalInvoked).toEventually(equal(true), timeout: .seconds(1))
+                expect(delegateB.shouldSendHangupNormalInvoked).toEventually(equal(true))
                 delegateB.shouldSendHangupNormalInvoked = false
             }
 
-            expect(delegateB.eventEndedGlareHandlingFailure).toEventually(equal(true), timeout: .seconds(1))
+            expect(delegateB.eventEndedGlareHandlingFailure).toEventually(equal(true))
             delegateB.eventEndedGlareHandlingFailure = false
 
-            expect(delegateB.shouldSendBusyInvoked).toEventually(equal(true), timeout: .seconds(1))
+            expect(delegateB.shouldSendBusyInvoked).toEventually(equal(true))
             delegateB.shouldSendBusyInvoked = false
 
             expect(delegateB.eventReceivedOfferWhileActive).to(equal(false))
@@ -1876,36 +1881,39 @@ class SignalRingRTCTests: XCTestCase {
 
         // Operation on B should be the same on A, no further testing required.
 
-        // Release the Call Managers (but there still might be references in the delegates!).
+        // Cleanup
+        delegateA.callManagerICE = []
+        delegateB.callManagerICE = []
         callManagerA = nil
         callManagerB = nil
-
-        // See what clears up after closing the Call Manager...
-        delay(interval: 1.0)
-
-        Logger.debug("Test: Exiting test function...")
     }
 
+    @MainActor
     func testGlareWinnerBeforeProceed() {
         glareTesting(scenario: .beforeProceed, condition: .winner)
     }
 
+    @MainActor
     func testGlareWinnerAfterProceed() {
         glareTesting(scenario: .afterProceed, condition: .winner)
     }
 
+    @MainActor
     func testGlareLoserBeforeProceed() {
         glareTesting(scenario: .beforeProceed, condition: .loser)
     }
 
+    @MainActor
     func testGlareLoserAfterProceed() {
         glareTesting(scenario: .afterProceed, condition: .loser)
     }
 
+    @MainActor
     func testGlareEqualBeforeProceed() {
         glareTesting(scenario: .beforeProceed, condition: .equal)
     }
 
+    @MainActor
     func testGlareEqualAfterProceed() {
         glareTesting(scenario: .afterProceed, condition: .equal)
     }
@@ -1916,11 +1924,12 @@ class SignalRingRTCTests: XCTestCase {
         case calleeReconnecting
     }
 
+    @MainActor
     func reCallTesting(scenario: ReCallScenario) {
         Logger.debug("Test: Testing ReCall for scenario: \(scenario)...")
 
         let delegateCaller = TestDelegate()
-        let callManagerCaller = createCallManager(delegateCaller)
+        var callManagerCaller = createCallManager(delegateCaller)
         expect(callManagerCaller).toNot(beNil())
 
         let delegateA = TestDelegate()
@@ -1953,12 +1962,12 @@ class SignalRingRTCTests: XCTestCase {
         do {
             let callA = OpaqueCallData(value: delegateA.expectedValue, remote: bAddress)
             try callManagerA?.placeCall(call: callA, callMediaType: .audioCall, localDevice: localDevice)
-            expect(delegateA.startOutgoingCallInvoked).toEventually(equal(true), timeout: .seconds(1))
+            expect(delegateA.startOutgoingCallInvoked).toEventually(equal(true))
             delegateA.startOutgoingCallInvoked = false
 
             let callIdAtoB = delegateA.recentCallId
             _ = try callManagerA?.proceed(callId: callIdAtoB, iceServers: iceServers, hideIp: useTurnOnly, videoCaptureController: videoCaptureController, dataMode: .normal, audioLevelsIntervalMillis: nil)
-            expect(delegateA.shouldSendOfferInvoked).toEventually(equal(true), timeout: .seconds(1))
+            expect(delegateA.shouldSendOfferInvoked).toEventually(equal(true))
             delegateA.shouldSendOfferInvoked = false
 
             let callB = OpaqueCallData(value: delegateB.expectedValue, remote: aAddress)
@@ -1968,12 +1977,12 @@ class SignalRingRTCTests: XCTestCase {
                 return
             }
 
-            try callManagerB?.receivedOffer(call: callB, sourceDevice: sourceDevice, callId: callIdAtoB, opaque: opaque, messageAgeSec: 0, callMediaType: .audioCall, localDevice: localDevice, isLocalDevicePrimary: true, senderIdentityKey: dummyLocalIdentityKey, receiverIdentityKey: dummyRemoteIdentityKey)
-            expect(delegateB.startIncomingCallInvoked).toEventually(equal(true), timeout: .seconds(1))
+            try callManagerB?.receivedOffer(call: callB, sourceDevice: sourceDevice, callId: callIdAtoB, opaque: opaque, messageAgeSec: 0, callMediaType: .audioCall, localDevice: localDevice, senderIdentityKey: dummyLocalIdentityKey, receiverIdentityKey: dummyRemoteIdentityKey)
+            expect(delegateB.startIncomingCallInvoked).toEventually(equal(true))
             delegateB.startIncomingCallInvoked = false
 
             try callManagerB?.proceed(callId: callIdAtoB, iceServers: iceServers, hideIp: useTurnOnly, videoCaptureController: videoCaptureController, dataMode: .normal, audioLevelsIntervalMillis: nil)
-            expect(delegateB.shouldSendAnswerInvoked).toEventually(equal(true), timeout: .seconds(2))
+            expect(delegateB.shouldSendAnswerInvoked).toEventually(equal(true))
             delegateB.shouldSendAnswerInvoked = false
             expect(delegateB.recentCallId).to(equal(callIdAtoB))
 
@@ -1984,18 +1993,18 @@ class SignalRingRTCTests: XCTestCase {
 
             try callManagerA?.receivedAnswer(sourceDevice: sourceDevice, callId: callIdAtoB, opaque: opaqueAnswer, senderIdentityKey: dummyRemoteIdentityKey, receiverIdentityKey: dummyLocalIdentityKey)
 
-            expect(delegateA.shouldSendIceCandidatesInvoked).toEventually(equal(true), timeout: .seconds(1))
+            expect(delegateA.shouldSendIceCandidatesInvoked).toEventually(equal(true))
             delegateA.canSendICE = true
             delegateA.tryToSendIceCandidates(callId: callIdAtoB, destinationDeviceId: nil, candidates: [])
 
-            expect(delegateB.shouldSendIceCandidatesInvoked).toEventually(equal(true), timeout: .seconds(1))
+            expect(delegateB.shouldSendIceCandidatesInvoked).toEventually(equal(true))
             delegateB.canSendICE = true
             delegateB.tryToSendIceCandidates(callId: callIdAtoB, destinationDeviceId: nil, candidates: [])
 
-            expect(delegateA.eventRemoteRingingInvoked).toEventually(equal(true), timeout: .seconds(5))
+            expect(delegateA.eventRemoteRingingInvoked).toEventually(equal(true))
             delegateA.eventRemoteRingingInvoked = false
 
-            expect(delegateB.eventLocalRingingInvoked).toEventually(equal(true), timeout: .seconds(1))
+            expect(delegateB.eventLocalRingingInvoked).toEventually(equal(true))
             delegateB.eventLocalRingingInvoked = false
 
             delay(interval: 1.0)
@@ -2003,14 +2012,14 @@ class SignalRingRTCTests: XCTestCase {
             try callManagerB?.accept(callId: callIdAtoB)
 
             // Connected?
-            expect(delegateB.eventLocalConnectedInvoked).toEventually(equal(true), timeout: .seconds(1))
+            expect(delegateB.eventLocalConnectedInvoked).toEventually(equal(true))
             delegateB.eventLocalConnectedInvoked = false;
 
-            expect(delegateA.eventRemoteConnectedInvoked).toEventually(equal(true), timeout: .seconds(2))
+            expect(delegateA.eventRemoteConnectedInvoked).toEventually(equal(true))
             delegateA.eventRemoteConnectedInvoked = false;
 
             // We should see a hangup/accepted from the callee here, who was the caller in this case.
-            expect(delegateA.shouldSendHangupAcceptedInvoked).toEventually(equal(true), timeout: .seconds(1))
+            expect(delegateA.shouldSendHangupAcceptedInvoked).toEventually(equal(true))
 
             // Neither side should have ended the call.
             expect(delegateA.eventGeneralEnded).to(equal(false))
@@ -2023,25 +2032,25 @@ class SignalRingRTCTests: XCTestCase {
             // End B quietly (no hangup) to simulate B ending before A is aware of it.
             callManagerB?.drop(callId: callIdAtoB)
 
-            expect(delegateB.eventEndedDropped).toEventually(equal(true), timeout: .seconds(1))
+            expect(delegateB.eventEndedDropped).toEventually(equal(true))
             delegateB.eventEndedDropped = false
             delegateB.eventGeneralEnded = false
 
             if scenario == .calleeReconnecting {
-              // Give some time to get to the reconnecting state. There will be 10 seconds after this before ICE Failure.
-              expect(delegateA.eventReconnecting).toEventually(equal(true), timeout: .seconds(10))
+              // Give plenty of time to get to the reconnecting state.
+              expect(delegateA.eventReconnecting).toEventually(equal(true), timeout: .seconds(30))
               delegateA.eventReconnecting = false
             }
 
             // Start the new call from B to A.
             let callB2 = OpaqueCallData(value: delegateB.expectedValue, remote: aAddress)
             try callManagerB?.placeCall(call: callB2, callMediaType: .audioCall, localDevice: localDevice)
-            expect(delegateB.startOutgoingCallInvoked).toEventually(equal(true), timeout: .seconds(1))
+            expect(delegateB.startOutgoingCallInvoked).toEventually(equal(true))
             delegateB.startOutgoingCallInvoked = false
 
             let callIdB2toA = delegateB.recentCallId
             _ = try callManagerB?.proceed(callId: callIdB2toA, iceServers: iceServers, hideIp: useTurnOnly, videoCaptureController: videoCaptureController, dataMode: .normal, audioLevelsIntervalMillis: nil)
-            expect(delegateB.shouldSendOfferInvoked).toEventually(equal(true), timeout: .seconds(1))
+            expect(delegateB.shouldSendOfferInvoked).toEventually(equal(true))
             delegateB.shouldSendOfferInvoked = false
 
             let callA2 = OpaqueCallData(value: delegateA.expectedValue, remote: bAddress)
@@ -2052,20 +2061,20 @@ class SignalRingRTCTests: XCTestCase {
             }
 
             // Provide the offer to A for the new call.
-            try callManagerA?.receivedOffer(call: callA2, sourceDevice: sourceDevice, callId: callIdB2toA, opaque: opaque, messageAgeSec: 0, callMediaType: .audioCall, localDevice: localDevice, isLocalDevicePrimary: true, senderIdentityKey: dummyLocalIdentityKey, receiverIdentityKey: dummyRemoteIdentityKey)
+            try callManagerA?.receivedOffer(call: callA2, sourceDevice: sourceDevice, callId: callIdB2toA, opaque: opaque, messageAgeSec: 0, callMediaType: .audioCall, localDevice: localDevice, senderIdentityKey: dummyLocalIdentityKey, receiverIdentityKey: dummyRemoteIdentityKey)
 
             // Existing call should end.
-            expect(delegateA.eventEndedRemoteReCall).toEventually(equal(true), timeout: .seconds(1))
+            expect(delegateA.eventEndedRemoteReCall).toEventually(equal(true))
             delegateA.eventEndedRemoteReCall = false
             delegateA.eventGeneralEnded = false
 
             // New call should be started.
-            expect(delegateA.startIncomingCallInvoked).toEventually(equal(true), timeout: .seconds(1))
+            expect(delegateA.startIncomingCallInvoked).toEventually(equal(true))
             delegateA.startIncomingCallInvoked = false
 
             // Simulate getting in to the new call (like before, but this time B is calling A).
             try callManagerA?.proceed(callId: callIdB2toA, iceServers: iceServers, hideIp: useTurnOnly, videoCaptureController: videoCaptureController, dataMode: .normal, audioLevelsIntervalMillis: nil)
-            expect(delegateA.shouldSendAnswerInvoked).toEventually(equal(true), timeout: .seconds(2))
+            expect(delegateA.shouldSendAnswerInvoked).toEventually(equal(true))
             delegateA.shouldSendAnswerInvoked = false
             expect(delegateA.recentCallId).to(equal(callIdB2toA))
 
@@ -2076,52 +2085,51 @@ class SignalRingRTCTests: XCTestCase {
 
             try callManagerB?.receivedAnswer(sourceDevice: sourceDevice, callId: callIdB2toA, opaque: opaqueAnswer2, senderIdentityKey: dummyRemoteIdentityKey, receiverIdentityKey: dummyLocalIdentityKey)
 
-            expect(delegateB.shouldSendIceCandidatesInvoked).toEventually(equal(true), timeout: .seconds(1))
+            expect(delegateB.shouldSendIceCandidatesInvoked).toEventually(equal(true))
             delegateB.canSendICE = true
             delegateB.tryToSendIceCandidates(callId: callIdB2toA, destinationDeviceId: nil, candidates: [])
 
-            expect(delegateA.shouldSendIceCandidatesInvoked).toEventually(equal(true), timeout: .seconds(1))
+            expect(delegateA.shouldSendIceCandidatesInvoked).toEventually(equal(true))
             delegateA.canSendICE = true
             delegateA.tryToSendIceCandidates(callId: callIdB2toA, destinationDeviceId: nil, candidates: [])
 
-            expect(delegateB.eventRemoteRingingInvoked).toEventually(equal(true), timeout: .seconds(5))
-            expect(delegateA.eventLocalRingingInvoked).toEventually(equal(true), timeout: .seconds(1))
+            expect(delegateB.eventRemoteRingingInvoked).toEventually(equal(true))
+            expect(delegateA.eventLocalRingingInvoked).toEventually(equal(true))
 
             delay(interval: 1.0)
 
             try callManagerA?.accept(callId: callIdB2toA)
 
             // Connected?
-            expect(delegateA.eventLocalConnectedInvoked).toEventually(equal(true), timeout: .seconds(1))
-            expect(delegateB.eventRemoteConnectedInvoked).toEventually(equal(true), timeout: .seconds(2))
+            expect(delegateA.eventLocalConnectedInvoked).toEventually(equal(true))
+            expect(delegateB.eventRemoteConnectedInvoked).toEventually(equal(true))
 
             // We should see a hangup/accepted from the callee here, who was the caller in this case.
-            expect(delegateB.shouldSendHangupAcceptedInvoked).toEventually(equal(true), timeout: .seconds(1))
+            expect(delegateB.shouldSendHangupAcceptedInvoked).toEventually(equal(true))
 
             // Neither side should have ended the new call.
             expect(delegateB.eventGeneralEnded).to(equal(false))
             expect(delegateA.eventGeneralEnded).to(equal(false))
-
-            delay(interval: 1.0)
         } catch {
            XCTFail("Scenario failed: \(error)")
            return
        }
 
-        // Release the Call Managers (but there still might be references in the delegates!).
+        // Cleanup
+        delegateCaller.callManagerICE = []
+        delegateA.callManagerICE = []
+        delegateB.callManagerICE = []
+        callManagerCaller = nil
         callManagerA = nil
         callManagerB = nil
-
-        // See what clears up after closing the Call Manager...
-        delay(interval: 1.0)
-
-        Logger.debug("Test: Exiting test function...")
     }
 
+    @MainActor
     func testRecallStillInCall() {
         reCallTesting(scenario: .calleeStillInCall)
     }
 
+    @MainActor
     func testRecallReconnecting() {
         reCallTesting(scenario: .calleeReconnecting)
     }
@@ -2133,6 +2141,7 @@ class SignalRingRTCTests: XCTestCase {
         case calleeAccepts   /// Caller rings multiple callee devices, one callee accepts and gets in to call, all other callees stop ringing.
     }
 
+    @MainActor
     func multiRingTesting(calleeDeviceCount: Int, loopIterations: Int, scenario: MultiRingScenario) {
         Logger.debug("Test: Testing multi-ring for scenario: \(scenario)...")
 
@@ -2200,12 +2209,12 @@ class SignalRingRTCTests: XCTestCase {
             do {
                 let call = OpaqueCallData(value: busyCallee.delegate.expectedValue, remote: extraAddress)
                 try busyCallee.callManager.placeCall(call: call, callMediaType: .audioCall, localDevice: busyCallee.deviceId)
-                expect(busyCallee.delegate.startOutgoingCallInvoked).toEventually(equal(true), timeout: .seconds(1))
+                expect(busyCallee.delegate.startOutgoingCallInvoked).toEventually(equal(true))
                 busyCallee.delegate.startOutgoingCallInvoked = false
 
                 let callId = busyCallee.delegate.recentCallId
                 _ = try busyCallee.callManager.proceed(callId: callId, iceServers: iceServers, hideIp: useTurnOnly, videoCaptureController: videoCaptureController, dataMode: .normal, audioLevelsIntervalMillis: nil)
-                expect(busyCallee.delegate.shouldSendOfferInvoked).toEventually(equal(true), timeout: .seconds(1))
+                expect(busyCallee.delegate.shouldSendOfferInvoked).toEventually(equal(true))
                 busyCallee.delegate.shouldSendOfferInvoked = false
 
                 let callExtra = OpaqueCallData(value: delegateExtra.expectedValue, remote: calleeAddress)
@@ -2215,18 +2224,18 @@ class SignalRingRTCTests: XCTestCase {
                     return
                 }
 
-                try callManagerExtra?.receivedOffer(call: callExtra, sourceDevice: busyCallee.deviceId, callId: callId, opaque: opaqueOffer, messageAgeSec: 0, callMediaType: .audioCall, localDevice: extraDevice, isLocalDevicePrimary: true, senderIdentityKey: dummyRemoteIdentityKey, receiverIdentityKey: dummyLocalIdentityKey)
+                try callManagerExtra?.receivedOffer(call: callExtra, sourceDevice: busyCallee.deviceId, callId: callId, opaque: opaqueOffer, messageAgeSec: 0, callMediaType: .audioCall, localDevice: extraDevice, senderIdentityKey: dummyRemoteIdentityKey, receiverIdentityKey: dummyLocalIdentityKey)
 
-                expect(busyCallee.delegate.shouldSendIceCandidatesInvoked).toEventually(equal(true), timeout: .seconds(1))
+                expect(busyCallee.delegate.shouldSendIceCandidatesInvoked).toEventually(equal(true))
                 busyCallee.delegate.canSendICE = true
                 busyCallee.delegate.tryToSendIceCandidates(callId: callId, destinationDeviceId: nil, candidates: [])
 
-                expect(delegateExtra.startIncomingCallInvoked).toEventually(equal(true), timeout: .seconds(1))
+                expect(delegateExtra.startIncomingCallInvoked).toEventually(equal(true))
                 delegateExtra.startIncomingCallInvoked = false
 
                 try callManagerExtra?.proceed(callId: callId, iceServers: iceServers, hideIp: useTurnOnly, videoCaptureController: videoCaptureController, dataMode: .normal, audioLevelsIntervalMillis: nil)
 
-                expect(delegateExtra.shouldSendAnswerInvoked).toEventually(equal(true), timeout: .seconds(2))
+                expect(delegateExtra.shouldSendAnswerInvoked).toEventually(equal(true))
                 delegateExtra.shouldSendAnswerInvoked = false
                 expect(delegateExtra.recentCallId).to(equal(callId))
 
@@ -2237,19 +2246,19 @@ class SignalRingRTCTests: XCTestCase {
 
                 try busyCallee.callManager.receivedAnswer(sourceDevice: extraDevice, callId: callId, opaque: opaqueAnswer, senderIdentityKey: dummyLocalIdentityKey, receiverIdentityKey: dummyRemoteIdentityKey)
 
-                expect(delegateExtra.shouldSendIceCandidatesInvoked).toEventually(equal(true), timeout: .seconds(1))
+                expect(delegateExtra.shouldSendIceCandidatesInvoked).toEventually(equal(true))
 
-                expect(busyCallee.delegate.eventRemoteRingingInvoked).toEventually(equal(true), timeout: .seconds(2))
-                expect(delegateExtra.eventLocalRingingInvoked).toEventually(equal(true), timeout: .seconds(1))
+                expect(busyCallee.delegate.eventRemoteRingingInvoked).toEventually(equal(true))
+                expect(delegateExtra.eventLocalRingingInvoked).toEventually(equal(true))
 
                 try callManagerExtra?.accept(callId: callId)
 
                 // Connected?
-                expect(busyCallee.delegate.eventRemoteConnectedInvoked).toEventually(equal(true), timeout: .seconds(2))
-                expect(delegateExtra.eventLocalConnectedInvoked).toEventually(equal(true), timeout: .seconds(1))
+                expect(busyCallee.delegate.eventRemoteConnectedInvoked).toEventually(equal(true))
+                expect(delegateExtra.eventLocalConnectedInvoked).toEventually(equal(true))
 
                 // For fun, we should see a hangup/accepted from the callee here, who was the caller in this case.
-                expect(busyCallee.delegate.shouldSendHangupAcceptedInvoked).toEventually(equal(true), timeout: .seconds(1))
+                expect(busyCallee.delegate.shouldSendHangupAcceptedInvoked).toEventually(equal(true))
 
                 // Neither side should have ended the call.
                 expect(busyCallee.delegate.eventGeneralEnded).to(equal(false))
@@ -2282,7 +2291,7 @@ class SignalRingRTCTests: XCTestCase {
                 return
             }
 
-            expect(delegateCaller.startOutgoingCallInvoked).toEventually(equal(true), timeout: .seconds(1))
+            expect(delegateCaller.startOutgoingCallInvoked).toEventually(equal(true))
             delegateCaller.startOutgoingCallInvoked = false
 
             // This may not be proper...
@@ -2296,7 +2305,7 @@ class SignalRingRTCTests: XCTestCase {
                 return
             }
 
-            expect(delegateCaller.shouldSendOfferInvoked).toEventually(equal(true), timeout: .seconds(1))
+            expect(delegateCaller.shouldSendOfferInvoked).toEventually(equal(true))
             delegateCaller.shouldSendOfferInvoked = false
 
             // We sent the offer! Let's give it to our callees.
@@ -2317,7 +2326,7 @@ class SignalRingRTCTests: XCTestCase {
 
                     // @note We are specifying multiple devices as primary, but it shouldn't
                     // matter for this type of testing.
-                    try element.callManager.receivedOffer(call: call, sourceDevice: callerDevice, callId: callId, opaque: opaque, messageAgeSec: 0, callMediaType: .audioCall, localDevice: element.deviceId, isLocalDevicePrimary: true, senderIdentityKey: dummyRemoteIdentityKey, receiverIdentityKey: dummyLocalIdentityKey)
+                    try element.callManager.receivedOffer(call: call, sourceDevice: callerDevice, callId: callId, opaque: opaque, messageAgeSec: 0, callMediaType: .audioCall, localDevice: element.deviceId, senderIdentityKey: dummyRemoteIdentityKey, receiverIdentityKey: dummyLocalIdentityKey)
                 }
             } catch {
                 XCTFail("Call Manager receivedOffer() failed: \(error)")
@@ -2340,7 +2349,7 @@ class SignalRingRTCTests: XCTestCase {
                         }
                     }
 
-                    expect(element.delegate.startIncomingCallInvoked).toEventually(equal(true), timeout: .seconds(1))
+                    expect(element.delegate.startIncomingCallInvoked).toEventually(equal(true))
                     element.delegate.startIncomingCallInvoked = false
 
                     Logger.debug("Test: Invoking proceed()...")
@@ -2361,7 +2370,7 @@ class SignalRingRTCTests: XCTestCase {
                         if element.deviceId == busyCallee.deviceId {
                             // The busy callee should be sending Busy, which we'll give to the caller.
 
-                            expect(element.delegate.shouldSendBusyInvoked).toEventually(equal(true), timeout: .seconds(2))
+                            expect(element.delegate.shouldSendBusyInvoked).toEventually(equal(true))
                             element.delegate.shouldSendBusyInvoked = false
 
                             expect(element.delegate.recentBusyCallId).to(equal(callId))
@@ -2373,7 +2382,7 @@ class SignalRingRTCTests: XCTestCase {
                         }
                     }
 
-                    expect(element.delegate.shouldSendAnswerInvoked).toEventually(equal(true), timeout: .seconds(2))
+                    expect(element.delegate.shouldSendAnswerInvoked).toEventually(equal(true))
                     element.delegate.shouldSendAnswerInvoked = false
 
                     expect(element.delegate.recentCallId).to(equal(callId))
@@ -2394,12 +2403,12 @@ class SignalRingRTCTests: XCTestCase {
             if scenario != .calleeBusy {
                 // The caller should get to ringing state when the first connection is made with
                 // any of the callees.
-                expect(delegateCaller.eventRemoteRingingInvoked).toEventually(equal(true), timeout: .seconds(2))
+                expect(delegateCaller.eventRemoteRingingInvoked).toEventually(equal(true))
                 delegateCaller.eventRemoteRingingInvoked = false
 
                 // Now make sure all the callees get to a ringing state.
                 for element in calleeDevices {
-                    expect(element.delegate.eventLocalRingingInvoked).toEventually(equal(true), timeout: .seconds(2))
+                    expect(element.delegate.eventLocalRingingInvoked).toEventually(equal(true))
                     element.delegate.eventLocalRingingInvoked = false
                 }
             }
@@ -2416,7 +2425,7 @@ class SignalRingRTCTests: XCTestCase {
                     return
                 }
 
-                expect(delegateCaller.shouldSendHangupNormalInvoked).toEventually(equal(true), timeout: .seconds(2))
+                expect(delegateCaller.shouldSendHangupNormalInvoked).toEventually(equal(true))
                 delegateCaller.shouldSendHangupNormalInvoked = false
 
                 // Now make sure all the callees get hungup.
@@ -2428,7 +2437,7 @@ class SignalRingRTCTests: XCTestCase {
                         return
                     }
 
-                    expect(element.delegate.eventEndedRemoteHangup).toEventually(equal(true), timeout: .seconds(2))
+                    expect(element.delegate.eventEndedRemoteHangup).toEventually(equal(true))
                     element.delegate.eventEndedRemoteHangup = false
                 }
 
@@ -2446,7 +2455,7 @@ class SignalRingRTCTests: XCTestCase {
                 }
 
                 // Callee sends normal hangup to the caller.
-                expect(decliningCallee.delegate.shouldSendHangupNormalInvoked).toEventually(equal(true), timeout: .seconds(2))
+                expect(decliningCallee.delegate.shouldSendHangupNormalInvoked).toEventually(equal(true))
                 decliningCallee.delegate.shouldSendHangupNormalInvoked = false
 
                 // Give the hangup to the caller.
@@ -2459,7 +2468,7 @@ class SignalRingRTCTests: XCTestCase {
                 }
 
                 // The caller will send hangup/declined.
-                expect(delegateCaller.shouldSendHangupDeclinedInvoked).toEventually(equal(true), timeout: .seconds(2))
+                expect(delegateCaller.shouldSendHangupDeclinedInvoked).toEventually(equal(true))
                 delegateCaller.shouldSendHangupDeclinedInvoked = false
 
                 // Now make sure all the callees get proper hangup indication.
@@ -2473,7 +2482,7 @@ class SignalRingRTCTests: XCTestCase {
 
                     // Skip over the declining callee...
                     if element.deviceId != decliningCallee.deviceId {
-                        expect(element.delegate.eventEndedRemoteHangupDeclined).toEventually(equal(true), timeout: .seconds(2))
+                        expect(element.delegate.eventEndedRemoteHangupDeclined).toEventually(equal(true))
                         element.delegate.eventEndedRemoteHangupDeclined = false
                     }
                 }
@@ -2485,11 +2494,11 @@ class SignalRingRTCTests: XCTestCase {
                 // an Answer.
 
                 // Caller should end with remote busy
-                expect(delegateCaller.eventEndedRemoteBusy).toEventually(equal(true), timeout: .seconds(1))
+                expect(delegateCaller.eventEndedRemoteBusy).toEventually(equal(true))
                 delegateCaller.eventEndedRemoteBusy = false
 
                 // Caller should send out a hangup/busy.
-                expect(delegateCaller.shouldSendHangupBusyInvoked).toEventually(equal(true), timeout: .seconds(1))
+                expect(delegateCaller.shouldSendHangupBusyInvoked).toEventually(equal(true))
                 delegateCaller.shouldSendHangupBusyInvoked = false
 
                 do {
@@ -2507,7 +2516,7 @@ class SignalRingRTCTests: XCTestCase {
                 for element in calleeDevices {
                     if element.deviceId == busyCallee.deviceId {
 
-                        expect(element.delegate.eventReceivedOfferWhileActive).toEventually(equal(true), timeout: .seconds(2))
+                        expect(element.delegate.eventReceivedOfferWhileActive).toEventually(equal(true))
                         element.delegate.eventReceivedOfferWhileActive = false
 
                         // The busy callee should not have ended their existing call.
@@ -2516,7 +2525,7 @@ class SignalRingRTCTests: XCTestCase {
                         continue
                     }
 
-                    expect(element.delegate.eventEndedRemoteHangupBusy).toEventually(equal(true), timeout: .seconds(1))
+                    expect(element.delegate.eventEndedRemoteHangupBusy).toEventually(equal(true))
                     element.delegate.eventEndedRemoteHangupBusy = false
                 }
 
@@ -2536,13 +2545,13 @@ class SignalRingRTCTests: XCTestCase {
                 // The connect message would go RTP data.
 
                 // Both the callee and caller should be in a connected state.
-                expect(acceptingCallee.delegate.eventLocalConnectedInvoked).toEventually(equal(true), timeout: .seconds(1))
+                expect(acceptingCallee.delegate.eventLocalConnectedInvoked).toEventually(equal(true))
                 acceptingCallee.delegate.eventLocalConnectedInvoked = false
-                expect(delegateCaller.eventRemoteConnectedInvoked).toEventually(equal(true), timeout: .seconds(1))
+                expect(delegateCaller.eventRemoteConnectedInvoked).toEventually(equal(true))
                 delegateCaller.eventRemoteConnectedInvoked = false
 
                 // The caller will send hangup/accepted.
-                expect(delegateCaller.shouldSendHangupAcceptedInvoked).toEventually(equal(true), timeout: .seconds(1))
+                expect(delegateCaller.shouldSendHangupAcceptedInvoked).toEventually(equal(true))
                 delegateCaller.shouldSendHangupAcceptedInvoked = false
 
                 // Now make sure all the callees get proper hangup indication.
@@ -2556,7 +2565,7 @@ class SignalRingRTCTests: XCTestCase {
 
                     // Skip over the accepting callee...
                     if element.deviceId != acceptingCallee.deviceId {
-                        expect(element.delegate.eventEndedRemoteHangupAccepted).toEventually(equal(true), timeout: .seconds(1))
+                        expect(element.delegate.eventEndedRemoteHangupAccepted).toEventually(equal(true))
                         element.delegate.eventEndedRemoteHangupAccepted = false
                     }
                 }
@@ -2572,7 +2581,7 @@ class SignalRingRTCTests: XCTestCase {
                     return
                 }
 
-                expect(delegateCaller.shouldSendHangupNormalInvoked).toEventually(equal(true), timeout: .seconds(1))
+                expect(delegateCaller.shouldSendHangupNormalInvoked).toEventually(equal(true))
                 delegateCaller.shouldSendHangupNormalInvoked = false
 
                 // Give the hangup to the callee.
@@ -2584,44 +2593,47 @@ class SignalRingRTCTests: XCTestCase {
                     return
                 }
 
-                expect(acceptingCallee.delegate.eventEndedRemoteHangup).toEventually(equal(true), timeout: .seconds(1))
+                expect(acceptingCallee.delegate.eventEndedRemoteHangup).toEventually(equal(true))
                 acceptingCallee.delegate.eventEndedRemoteHangup = false
 
                 // The other callees would get a hangup, but they are already
                 // hungup, so we won't simulate that now.
             }
 
+            delay(interval: 1.0)
+
             Logger.debug("Test: End of test loop...")
         }
 
         Logger.debug("Test: Done with test loop...")
 
-        // Delay the end of the test to give Logger time to catch up.
-        delay(interval: 1.0)
-
-        // Release the Call Managers (but there still might be references in the delegates!).
+        // Cleanup
+        delegateCaller.callManagerICE = []
+        for device in calleeDevices {
+            device.delegate.callManagerICE = []
+        }
+        delegateExtra.callManagerICE = []
         callManagerExtra = nil
-        callManagerCaller = nil
         calleeDevices = []
-
-        // See what clears up after closing the Call Manager...
-        delay(interval: 1.0)
-
-        Logger.debug("Test: Exiting test function...")
+        callManagerCaller = nil
     }
 
+    @MainActor
     func testMultiRing() {
         multiRingTesting(calleeDeviceCount: 2, loopIterations: 1, scenario: .callerEnds)
     }
 
+    @MainActor
     func testMultiRingDeclined() {
         multiRingTesting(calleeDeviceCount: 2, loopIterations: 1, scenario: .calleeDeclines)
     }
 
+    @MainActor
     func testMultiRingBusy() {
         multiRingTesting(calleeDeviceCount: 2, loopIterations: 1, scenario: .calleeBusy)
     }
 
+    @MainActor
     func testMultiRingAccepted() {
         multiRingTesting(calleeDeviceCount: 2, loopIterations: 1, scenario: .calleeAccepts)
     }
@@ -2633,6 +2645,7 @@ class SignalRingRTCTests: XCTestCase {
         case differentDevice  /// A1 is in call with B1; A2 calls B, should ring on B2
     }
 
+    @MainActor
     func multiRingGlareTesting(scenario: MultiRingGlareScenario) {
         Logger.debug("Test: Testing multi-ring glare for scenario: \(scenario)...")
 
@@ -2680,7 +2693,7 @@ class SignalRingRTCTests: XCTestCase {
             return
         }
 
-        expect(delegateA1.startOutgoingCallInvoked).toEventually(equal(true), timeout: .seconds(1))
+        expect(delegateA1.startOutgoingCallInvoked).toEventually(equal(true))
         delegateA1.startOutgoingCallInvoked = false
         let callIdA1toB = delegateA1.recentCallId
 
@@ -2692,7 +2705,7 @@ class SignalRingRTCTests: XCTestCase {
             return
         }
 
-        expect(delegateA1.shouldSendOfferInvoked).toEventually(equal(true), timeout: .seconds(2))
+        expect(delegateA1.shouldSendOfferInvoked).toEventually(equal(true))
         delegateA1.shouldSendOfferInvoked = false
 
         if scenario == .primaryWinner || scenario == .primaryLoser || scenario == .primaryEqual {
@@ -2708,7 +2721,7 @@ class SignalRingRTCTests: XCTestCase {
                 return
             }
 
-            expect(delegateB1.startOutgoingCallInvoked).toEventually(equal(true), timeout: .seconds(1))
+            expect(delegateB1.startOutgoingCallInvoked).toEventually(equal(true))
             delegateB1.startOutgoingCallInvoked = false
             let callIdB1toA = delegateB1.recentCallId
 
@@ -2720,7 +2733,7 @@ class SignalRingRTCTests: XCTestCase {
                 return
             }
 
-            expect(delegateB1.shouldSendOfferInvoked).toEventually(equal(true), timeout: .seconds(2))
+            expect(delegateB1.shouldSendOfferInvoked).toEventually(equal(true))
             delegateB1.shouldSendOfferInvoked = false
 
             // Override the call-id for B's perspective to follow the scenario.
@@ -2762,9 +2775,9 @@ class SignalRingRTCTests: XCTestCase {
                     return
                 }
 
-                try callManagerB1?.receivedOffer(call: callA1toB1, sourceDevice: a1Device, callId: callIdA1toBOverride, opaque: opaque, messageAgeSec: 0, callMediaType: .audioCall, localDevice: b1Device, isLocalDevicePrimary: true, senderIdentityKey: dummyLocalIdentityKey, receiverIdentityKey: dummyRemoteIdentityKey)
+                try callManagerB1?.receivedOffer(call: callA1toB1, sourceDevice: a1Device, callId: callIdA1toBOverride, opaque: opaque, messageAgeSec: 0, callMediaType: .audioCall, localDevice: b1Device, senderIdentityKey: dummyLocalIdentityKey, receiverIdentityKey: dummyRemoteIdentityKey)
                 let callA1toB2 = OpaqueCallData(value: delegateB2.expectedValue, remote: aAddress)
-                try callManagerB2?.receivedOffer(call: callA1toB2, sourceDevice: a1Device, callId: callIdA1toBOverride, opaque: opaque, messageAgeSec: 0, callMediaType: .audioCall, localDevice: b2Device, isLocalDevicePrimary: false, senderIdentityKey: dummyLocalIdentityKey, receiverIdentityKey: dummyRemoteIdentityKey)
+                try callManagerB2?.receivedOffer(call: callA1toB2, sourceDevice: a1Device, callId: callIdA1toBOverride, opaque: opaque, messageAgeSec: 0, callMediaType: .audioCall, localDevice: b2Device, senderIdentityKey: dummyLocalIdentityKey, receiverIdentityKey: dummyRemoteIdentityKey)
             } catch {
                 XCTFail("Call Manager receivedOffer() failed: \(error)")
                 return
@@ -2780,7 +2793,7 @@ class SignalRingRTCTests: XCTestCase {
                     return
                 }
 
-                try callManagerA1?.receivedOffer(call: call, sourceDevice: b1Device, callId: callIdB1toAOverride, opaque: opaque, messageAgeSec: 0, callMediaType: .audioCall, localDevice: a1Device, isLocalDevicePrimary: true, senderIdentityKey: dummyLocalIdentityKey, receiverIdentityKey: dummyRemoteIdentityKey)
+                try callManagerA1?.receivedOffer(call: call, sourceDevice: b1Device, callId: callIdB1toAOverride, opaque: opaque, messageAgeSec: 0, callMediaType: .audioCall, localDevice: a1Device, senderIdentityKey: dummyLocalIdentityKey, receiverIdentityKey: dummyRemoteIdentityKey)
             } catch {
                 XCTFail("Call Manager receivedOffer() failed: \(error)")
                 return
@@ -2788,7 +2801,7 @@ class SignalRingRTCTests: XCTestCase {
 
             // B2 behavior:
 
-            expect(delegateB2.startIncomingCallInvoked).toEventually(equal(true), timeout: .seconds(1))
+            expect(delegateB2.startIncomingCallInvoked).toEventually(equal(true))
             delegateB2.startIncomingCallInvoked = false
 
             do {
@@ -2799,41 +2812,41 @@ class SignalRingRTCTests: XCTestCase {
                 return
             }
 
-            expect(delegateB2.shouldSendAnswerInvoked).toEventually(equal(true), timeout: .seconds(2))
+            expect(delegateB2.shouldSendAnswerInvoked).toEventually(equal(true))
             delegateB2.shouldSendAnswerInvoked = false
 
             // A1 behavior:
 
             if scenario == .primaryWinner {
                 // A should lose.
-                expect(delegateA1.eventEndedRemoteGlare).toEventually(equal(true), timeout: .seconds(1))
+                expect(delegateA1.eventEndedRemoteGlare).toEventually(equal(true))
                 delegateA1.eventEndedRemoteGlare = false
 
                 // Hangup is for the outgoing offer.
-                expect(delegateA1.shouldSendHangupNormalInvoked).toEventually(equal(true), timeout: .seconds(1))
+                expect(delegateA1.shouldSendHangupNormalInvoked).toEventually(equal(true))
                 delegateA1.shouldSendHangupNormalInvoked = false
 
                 expect(delegateA1.eventReceivedOfferWhileActive).to(equal(false))
                 expect(delegateA1.shouldSendBusyInvoked).to(equal(false))
             } else if scenario == .primaryLoser {
                 // A should win.
-                expect(delegateA1.eventReceivedOfferWithGlare).toEventually(equal(true), timeout: .seconds(2))
+                expect(delegateA1.eventReceivedOfferWithGlare).toEventually(equal(true))
                 delegateA1.eventReceivedOfferWithGlare = false
 
                 expect(delegateA1.shouldSendBusyInvoked).to(equal(false))
                 expect(delegateA1.eventEndedRemoteGlare).to(equal(false))
             } else {
-                expect(delegateA1.eventEndedRemoteGlare).toEventually(equal(true), timeout: .seconds(2))
+                expect(delegateA1.eventEndedRemoteGlare).toEventually(equal(true))
                 delegateA1.eventEndedRemoteGlare = false
 
                 // Hangup is for the outgoing offer.
-                expect(delegateA1.shouldSendHangupNormalInvoked).toEventually(equal(true), timeout: .seconds(1))
+                expect(delegateA1.shouldSendHangupNormalInvoked).toEventually(equal(true))
                 delegateA1.shouldSendHangupNormalInvoked = false
 
-                expect(delegateA1.eventEndedGlareHandlingFailure).toEventually(equal(true), timeout: .seconds(1))
+                expect(delegateA1.eventEndedGlareHandlingFailure).toEventually(equal(true))
                 delegateA1.eventEndedGlareHandlingFailure = false
 
-                expect(delegateA1.shouldSendBusyInvoked).toEventually(equal(true), timeout: .seconds(1))
+                expect(delegateA1.shouldSendBusyInvoked).toEventually(equal(true))
                 delegateA1.shouldSendBusyInvoked = false
 
                 expect(delegateA1.eventReceivedOfferWhileActive).to(equal(false))
@@ -2842,33 +2855,33 @@ class SignalRingRTCTests: XCTestCase {
             // B1 behavior:
 
             if scenario == .primaryWinner {
-                expect(delegateB1.eventReceivedOfferWithGlare).toEventually(equal(true), timeout: .seconds(1))
+                expect(delegateB1.eventReceivedOfferWithGlare).toEventually(equal(true))
                 delegateB1.eventReceivedOfferWithGlare = false
 
                 expect(delegateB1.shouldSendBusyInvoked).to(equal(false))
                 expect(delegateB1.eventEndedRemoteGlare).to(equal(false))
             } else if scenario == .primaryLoser {
-                expect(delegateB1.eventEndedRemoteGlare).toEventually(equal(true), timeout: .seconds(1))
+                expect(delegateB1.eventEndedRemoteGlare).toEventually(equal(true))
                 delegateB1.eventEndedRemoteGlare = false
 
                 // Hangup is for the outgoing offer.
-                expect(delegateB1.shouldSendHangupNormalInvoked).toEventually(equal(true), timeout: .seconds(1))
+                expect(delegateB1.shouldSendHangupNormalInvoked).toEventually(equal(true))
                 delegateB1.shouldSendHangupNormalInvoked = false
 
                 expect(delegateB1.eventReceivedOfferWhileActive).to(equal(false))
                 expect(delegateB1.shouldSendBusyInvoked).to(equal(false))
             } else {
-                expect(delegateB1.eventEndedRemoteGlare).toEventually(equal(true), timeout: .seconds(1))
+                expect(delegateB1.eventEndedRemoteGlare).toEventually(equal(true))
                 delegateB1.eventEndedRemoteGlare = false
 
                 // Hangup is for the outgoing offer.
-                expect(delegateB1.shouldSendHangupNormalInvoked).toEventually(equal(true), timeout: .seconds(2))
+                expect(delegateB1.shouldSendHangupNormalInvoked).toEventually(equal(true))
                 delegateB1.shouldSendHangupNormalInvoked = false
 
-                expect(delegateB1.eventEndedGlareHandlingFailure).toEventually(equal(true), timeout: .seconds(1))
+                expect(delegateB1.eventEndedGlareHandlingFailure).toEventually(equal(true))
                 delegateB1.eventEndedGlareHandlingFailure = false
 
-                expect(delegateB1.shouldSendBusyInvoked).toEventually(equal(true), timeout: .seconds(1))
+                expect(delegateB1.shouldSendBusyInvoked).toEventually(equal(true))
                 delegateB1.shouldSendBusyInvoked = false
 
                 expect(delegateB1.eventReceivedOfferWhileActive).to(equal(false))
@@ -2895,7 +2908,7 @@ class SignalRingRTCTests: XCTestCase {
                     return
                 }
 
-                expect(delegateB2.eventEndedRemoteHangup).toEventually(equal(true), timeout: .seconds(2))
+                expect(delegateB2.eventEndedRemoteHangup).toEventually(equal(true))
                 delegateB2.eventEndedRemoteHangup = false
 
                 // B1 shouldn't have done anything.
@@ -2925,7 +2938,7 @@ class SignalRingRTCTests: XCTestCase {
                     return
                 }
 
-                expect(delegateB2.eventEndedRemoteHangup).toEventually(equal(true), timeout: .seconds(2))
+                expect(delegateB2.eventEndedRemoteHangup).toEventually(equal(true))
                 delegateB2.eventEndedRemoteHangup = false
 
                 // Reset B2 general detection (to check later).
@@ -2981,18 +2994,18 @@ class SignalRingRTCTests: XCTestCase {
                     return
                 }
 
-                try callManagerB1?.receivedOffer(call: callA1toB1, sourceDevice: a1Device, callId: callIdA1toB, opaque: opaque, messageAgeSec: 0, callMediaType: .audioCall, localDevice: b1Device, isLocalDevicePrimary: true, senderIdentityKey: dummyRemoteIdentityKey, receiverIdentityKey: dummyLocalIdentityKey)
+                try callManagerB1?.receivedOffer(call: callA1toB1, sourceDevice: a1Device, callId: callIdA1toB, opaque: opaque, messageAgeSec: 0, callMediaType: .audioCall, localDevice: b1Device, senderIdentityKey: dummyRemoteIdentityKey, receiverIdentityKey: dummyLocalIdentityKey)
                 let callA1toB2 = OpaqueCallData(value: delegateB2.expectedValue, remote: aAddress)
-                try callManagerB2?.receivedOffer(call: callA1toB2, sourceDevice: a1Device, callId: callIdA1toB, opaque: opaque, messageAgeSec: 0, callMediaType: .audioCall, localDevice: b2Device, isLocalDevicePrimary: false, senderIdentityKey: dummyRemoteIdentityKey, receiverIdentityKey: dummyLocalIdentityKey)
+                try callManagerB2?.receivedOffer(call: callA1toB2, sourceDevice: a1Device, callId: callIdA1toB, opaque: opaque, messageAgeSec: 0, callMediaType: .audioCall, localDevice: b2Device, senderIdentityKey: dummyRemoteIdentityKey, receiverIdentityKey: dummyLocalIdentityKey)
             } catch {
                 XCTFail("Call Manager receivedOffer() failed: \(error)")
                 return
             }
 
-            expect(delegateB1.startIncomingCallInvoked).toEventually(equal(true), timeout: .seconds(1))
+            expect(delegateB1.startIncomingCallInvoked).toEventually(equal(true))
             delegateB1.startIncomingCallInvoked = false
 
-            expect(delegateB2.startIncomingCallInvoked).toEventually(equal(true), timeout: .seconds(1))
+            expect(delegateB2.startIncomingCallInvoked).toEventually(equal(true))
             delegateB2.startIncomingCallInvoked = false
 
             do {
@@ -3004,15 +3017,15 @@ class SignalRingRTCTests: XCTestCase {
                 return
             }
 
-            expect(delegateB1.shouldSendAnswerInvoked).toEventually(equal(true), timeout: .seconds(2))
+            expect(delegateB1.shouldSendAnswerInvoked).toEventually(equal(true))
             delegateB1.shouldSendAnswerInvoked = false
-            expect(delegateB2.shouldSendAnswerInvoked).toEventually(equal(true), timeout: .seconds(1))
+            expect(delegateB2.shouldSendAnswerInvoked).toEventually(equal(true))
             delegateB2.shouldSendAnswerInvoked = false
 
             // We also expect ICE candidates to be ready for A1 and B1.
-            expect(delegateA1.shouldSendIceCandidatesInvoked).toEventually(equal(true), timeout: .seconds(1))
+            expect(delegateA1.shouldSendIceCandidatesInvoked).toEventually(equal(true))
             delegateA1.shouldSendIceCandidatesInvoked = false
-            expect(delegateB1.shouldSendIceCandidatesInvoked).toEventually(equal(true), timeout: .seconds(1))
+            expect(delegateB1.shouldSendIceCandidatesInvoked).toEventually(equal(true))
             delegateB1.shouldSendIceCandidatesInvoked = false
 
             // Send answer and candidates between A1 and B1.
@@ -3033,9 +3046,9 @@ class SignalRingRTCTests: XCTestCase {
             }
 
             // Should get to ringing.
-            expect(delegateA1.eventRemoteRingingInvoked).toEventually(equal(true), timeout: .seconds(2))
+            expect(delegateA1.eventRemoteRingingInvoked).toEventually(equal(true))
             delegateA1.eventRemoteRingingInvoked = false
-            expect(delegateB1.eventLocalRingingInvoked).toEventually(equal(true), timeout: .seconds(1))
+            expect(delegateB1.eventLocalRingingInvoked).toEventually(equal(true))
             delegateB1.eventLocalRingingInvoked = false
 
             // Accept on B1.
@@ -3048,13 +3061,13 @@ class SignalRingRTCTests: XCTestCase {
             }
 
             // Should get connected.
-            expect(delegateA1.eventRemoteConnectedInvoked).toEventually(equal(true), timeout: .seconds(2))
+            expect(delegateA1.eventRemoteConnectedInvoked).toEventually(equal(true))
             delegateA1.eventRemoteConnectedInvoked = false
-            expect(delegateB1.eventLocalConnectedInvoked).toEventually(equal(true), timeout: .seconds(1))
+            expect(delegateB1.eventLocalConnectedInvoked).toEventually(equal(true))
             delegateB1.eventLocalConnectedInvoked = false
 
             // Should get hangup/Accepted to be sent to B.
-            expect(delegateA1.shouldSendHangupAcceptedInvoked).toEventually(equal(true), timeout: .seconds(1))
+            expect(delegateA1.shouldSendHangupAcceptedInvoked).toEventually(equal(true))
             delegateA1.shouldSendHangupAcceptedInvoked = false
 
             // Send hangup/Accepted to B1 and B2.
@@ -3068,7 +3081,7 @@ class SignalRingRTCTests: XCTestCase {
             }
 
             // B2 should be ended.
-            expect(delegateB2.eventEndedRemoteHangupAccepted).toEventually(equal(true), timeout: .seconds(1))
+            expect(delegateB2.eventEndedRemoteHangupAccepted).toEventually(equal(true))
             delegateB2.eventEndedRemoteHangupAccepted = false
 
             // B1 should not be ended.
@@ -3088,7 +3101,7 @@ class SignalRingRTCTests: XCTestCase {
                 return
             }
 
-            expect(delegateA2.startOutgoingCallInvoked).toEventually(equal(true), timeout: .seconds(1))
+            expect(delegateA2.startOutgoingCallInvoked).toEventually(equal(true))
             delegateA2.startOutgoingCallInvoked = false
             let callIdA2toB = delegateA2.recentCallId
 
@@ -3100,7 +3113,7 @@ class SignalRingRTCTests: XCTestCase {
                 return
             }
 
-            expect(delegateA2.shouldSendOfferInvoked).toEventually(equal(true), timeout: .seconds(2))
+            expect(delegateA2.shouldSendOfferInvoked).toEventually(equal(true))
             delegateA2.shouldSendOfferInvoked = false
 
             // Give the offer from A2 to B1 & B2.
@@ -3113,9 +3126,9 @@ class SignalRingRTCTests: XCTestCase {
                     return
                 }
 
-                try callManagerB1?.receivedOffer(call: callA2toB1, sourceDevice: a2Device, callId: callIdA2toB, opaque: opaque, messageAgeSec: 0, callMediaType: .audioCall, localDevice: b1Device, isLocalDevicePrimary: true, senderIdentityKey: dummyRemoteIdentityKey, receiverIdentityKey: dummyLocalIdentityKey)
+                try callManagerB1?.receivedOffer(call: callA2toB1, sourceDevice: a2Device, callId: callIdA2toB, opaque: opaque, messageAgeSec: 0, callMediaType: .audioCall, localDevice: b1Device, senderIdentityKey: dummyRemoteIdentityKey, receiverIdentityKey: dummyLocalIdentityKey)
                 let callA2toB2 = OpaqueCallData(value: delegateB2.expectedValue, remote: aAddress)
-                try callManagerB2?.receivedOffer(call: callA2toB2, sourceDevice: a2Device, callId: callIdA2toB, opaque: opaque, messageAgeSec: 0, callMediaType: .audioCall, localDevice: b2Device, isLocalDevicePrimary: false, senderIdentityKey: dummyRemoteIdentityKey, receiverIdentityKey: dummyLocalIdentityKey)
+                try callManagerB2?.receivedOffer(call: callA2toB2, sourceDevice: a2Device, callId: callIdA2toB, opaque: opaque, messageAgeSec: 0, callMediaType: .audioCall, localDevice: b2Device, senderIdentityKey: dummyRemoteIdentityKey, receiverIdentityKey: dummyLocalIdentityKey)
             } catch {
                 XCTFail("Call Manager receivedOffer() failed: \(error)")
                 return
@@ -3123,16 +3136,16 @@ class SignalRingRTCTests: XCTestCase {
 
             // B1 behavior:
 
-            expect(delegateB1.eventReceivedOfferWhileActive).toEventually(equal(true), timeout: .seconds(2))
+            expect(delegateB1.eventReceivedOfferWhileActive).toEventually(equal(true))
             delegateB1.eventReceivedOfferWhileActive = false
 
             // Busy is for the incoming offer.
-            expect(delegateB1.shouldSendBusyInvoked).toEventually(equal(true), timeout: .seconds(2))
+            expect(delegateB1.shouldSendBusyInvoked).toEventually(equal(true))
             delegateB1.shouldSendBusyInvoked = false
 
             // B2 behavior:
 
-            expect(delegateB2.startIncomingCallInvoked).toEventually(equal(true), timeout: .seconds(1))
+            expect(delegateB2.startIncomingCallInvoked).toEventually(equal(true))
             delegateB2.startIncomingCallInvoked = false
 
             do {
@@ -3143,13 +3156,13 @@ class SignalRingRTCTests: XCTestCase {
                 return
             }
 
-            expect(delegateB2.shouldSendAnswerInvoked).toEventually(equal(true), timeout: .seconds(2))
+            expect(delegateB2.shouldSendAnswerInvoked).toEventually(equal(true))
             delegateB2.shouldSendAnswerInvoked = false
 
             // We also expect ICE candidates to be ready for A2 and B2.
-            expect(delegateA2.shouldSendIceCandidatesInvoked).toEventually(equal(true), timeout: .seconds(1))
+            expect(delegateA2.shouldSendIceCandidatesInvoked).toEventually(equal(true))
             delegateA2.shouldSendIceCandidatesInvoked = false
-            expect(delegateB2.shouldSendIceCandidatesInvoked).toEventually(equal(true), timeout: .seconds(1))
+            expect(delegateB2.shouldSendIceCandidatesInvoked).toEventually(equal(true))
             delegateB2.shouldSendIceCandidatesInvoked = false
 
             // Give the busy from B1 back to A.
@@ -3163,40 +3176,44 @@ class SignalRingRTCTests: XCTestCase {
             }
 
             // Just make sure A2 ends and generates hangup/busy.
-            expect(delegateA2.eventEndedRemoteBusy).toEventually(equal(true), timeout: .seconds(1))
+            expect(delegateA2.eventEndedRemoteBusy).toEventually(equal(true))
             delegateA2.eventEndedRemoteBusy = false
-            expect(delegateA2.shouldSendHangupBusyInvoked).toEventually(equal(true), timeout: .seconds(1))
+            expect(delegateA2.shouldSendHangupBusyInvoked).toEventually(equal(true))
             delegateA2.shouldSendHangupBusyInvoked = false
         }
 
-        // Release the Call Managers (but there still might be references in the delegates!).
+        // Cleanup
+        delegateA1.callManagerICE = []
+        delegateA2.callManagerICE = []
+        delegateB1.callManagerICE = []
+        delegateB2.callManagerICE = []
         callManagerA1 = nil
         callManagerA2 = nil
         callManagerB1 = nil
         callManagerB2 = nil
-
-        // See what clears up after closing the Call Manager...
-        delay(interval: 1.0)
-
-        Logger.debug("Test: Exiting test function...")
     }
 
+    @MainActor
     func testMultiRingGlarePrimaryWinner() {
         multiRingGlareTesting(scenario: .primaryWinner)
     }
 
+    @MainActor
     func testMultiRingGlarePrimaryLoser() {
         multiRingGlareTesting(scenario: .primaryLoser)
     }
 
+    @MainActor
     func testMultiRingGlarePrimaryEqual() {
         multiRingGlareTesting(scenario: .primaryEqual)
     }
 
+    @MainActor
     func testMultiRingGlareDifferentDevice() {
         multiRingGlareTesting(scenario: .differentDevice)
     }
 
+    @MainActor
     func testCallIdFromEra() {
         let fromHex = callIdFromEra("1122334455667788")
         XCTAssertEqual(fromHex, 0x1122334455667788)
@@ -3213,11 +3230,12 @@ class SignalRingRTCTests: XCTestCase {
             var hash = SHA256()
             hash.update(bufferPointer: UnsafeRawBufferPointer(input))
             let digest = hash.finalize().withUnsafeBytes { Data($0) }
-            return digest.hexadecimalString
+            return digest.map { String(format: "%02x", $0) }.joined()
         }
     }
 
-    func testPeekWithPendingClients() throws {
+    @MainActor
+    func testPeekWithPendingClients() async throws {
         let delegate = TestDelegate()
         let httpClient = HTTPClient(delegate: delegate)
         let sfu = SFUClient(httpClient: httpClient)
@@ -3232,44 +3250,39 @@ class SignalRingRTCTests: XCTestCase {
             GroupMember(userId: user3, userIdCipherText: "33".data(using: .utf8)!),
         ]
 
-        let callbackCompleted = expectation(description: "callbackCompleted")
-        sfu.peek(request: PeekRequest(sfuURL: "sfu.example", membershipProof: Data([1, 2, 3]), groupMembers: groupMembers))
-            .done { result in
-                XCTAssertNil(result.errorStatusCode)
-                let peekInfo = result.peekInfo
-                XCTAssertEqual(peekInfo.eraId, "mesozoic")
-                XCTAssertEqual(peekInfo.deviceCountIncludingPendingDevices, 7)
-                XCTAssertEqual(peekInfo.deviceCountExcludingPendingDevices, 3)
-                XCTAssertEqual(peekInfo.maxDevices, 20)
-                XCTAssertEqual(peekInfo.creator, user1)
-                XCTAssertEqual(Set(peekInfo.joinedMembers), [user1, user2]);
-                XCTAssertEqual(peekInfo.pendingUsers, [user3]);
-                callbackCompleted.fulfill()
-            }
+        delegate.onSendRequest { id, request in
+            XCTAssert(request.url.starts(with: "sfu.example"))
+            XCTAssertEqual(request.method, .get)
+            httpClient.receivedResponse(requestId: id, response: HTTPResponse(statusCode: 200, body: """
+    {
+      "conferenceId":"mesozoic",
+      "maxDevices":20,
+      "creator":"\(self.sha256Hex("11"))",
+      "participants":[
+        {"opaqueUserId":"\(self.sha256Hex("11"))","demuxId":\(32 * 1)},
+        {"opaqueUserId":"\(self.sha256Hex("22"))","demuxId":\(32 * 2)},
+        {"opaqueUserId":"\(self.sha256Hex("44"))","demuxId":\(32 * 3)}
+      ],
+      "pendingClients":[
+        {"opaqueUserId":"\(self.sha256Hex("33"))","demuxId":\(32 * 4)},
+        {"opaqueUserId":"\(self.sha256Hex("33"))","demuxId":\(32 * 5)},
+        {"opaqueUserId":"\(self.sha256Hex("44"))","demuxId":\(32 * 6)},
+        {"demuxId":\(32 * 7)}
+      ]
+    }
+    """.data(using: .utf8)))
+        }
 
-        wait(for: [delegate.sentHttpRequestExpectation], timeout: 1.0)
-        XCTAssert(try XCTUnwrap(delegate.sentHttpRequestUrl).starts(with: "sfu.example"))
-        XCTAssertEqual(delegate.sentHttpRequestMethod, .get)
-        let requestId = try XCTUnwrap(delegate.sentHttpRequestId)
-        httpClient.receivedResponse(requestId: requestId, response: HTTPResponse(statusCode: 200, body: """
-{
-  "conferenceId":"mesozoic",
-  "maxDevices":20,
-  "creator":"\(sha256Hex("11"))",
-  "participants":[
-    {"opaqueUserId":"\(sha256Hex("11"))","demuxId":\(32 * 1)},
-    {"opaqueUserId":"\(sha256Hex("22"))","demuxId":\(32 * 2)},
-    {"opaqueUserId":"\(sha256Hex("44"))","demuxId":\(32 * 3)}
-  ],
-  "pendingClients":[
-    {"opaqueUserId":"\(sha256Hex("33"))","demuxId":\(32 * 4)},
-    {"opaqueUserId":"\(sha256Hex("33"))","demuxId":\(32 * 5)},
-    {"opaqueUserId":"\(sha256Hex("44"))","demuxId":\(32 * 6)},
-    {"demuxId":\(32 * 7)}
-  ]
-}
-""".data(using: .utf8)))
-        waitForExpectations(timeout: 1.0)
+        let result = await sfu.peek(request: PeekRequest(sfuURL: "sfu.example", membershipProof: Data([1, 2, 3]), groupMembers: groupMembers))
+        XCTAssertNil(result.errorStatusCode)
+        let peekInfo = result.peekInfo
+        XCTAssertEqual(peekInfo.eraId, "mesozoic")
+        XCTAssertEqual(peekInfo.deviceCountIncludingPendingDevices, 7)
+        XCTAssertEqual(peekInfo.deviceCountExcludingPendingDevices, 3)
+        XCTAssertEqual(peekInfo.maxDevices, 20)
+        XCTAssertEqual(peekInfo.creator, user1)
+        XCTAssertEqual(Set(peekInfo.joinedMembers), [user1, user2]);
+        XCTAssertEqual(peekInfo.pendingUsers, [user3]);
     }
 
     // MARK: - Constants

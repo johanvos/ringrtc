@@ -3,14 +3,17 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //
 
-use anyhow::Result;
-use itertools::Itertools;
 use std::{ffi::OsStr, path::Path};
 
-use crate::common::AudioConfig;
-use crate::docker::{analyze_pesq_mos, analyze_plc_mos, analyze_visqol_mos};
-use crate::report::{AnalysisReport, AnalysisReportMos, Stats, StatsConfig, StatsData};
-use crate::test::AudioTestResults;
+use anyhow::Result;
+use itertools::Itertools;
+
+use crate::{
+    common::AudioConfig,
+    docker::{analyze_pesq_mos, analyze_plc_mos, analyze_visqol_mos},
+    report::{AnalysisReport, AnalysisReportMos, Stats, StatsConfig, StatsData},
+    test::AudioTestResults,
+};
 
 pub struct ChopAudioResult {
     file_names: Vec<String>,
@@ -53,7 +56,7 @@ pub fn chop_audio(
     {
         let output_name = format!("{}.{}.{}", degraded_stem, i, degraded_extension);
         let mut writer =
-            hound::WavWriter::create(&format!("{}/{}", degraded_path, output_name), spec)?;
+            hound::WavWriter::create(format!("{}/{}", degraded_path, output_name), spec)?;
 
         for sample in chunk {
             if let Ok(sample) = sample {

@@ -7,16 +7,21 @@
 
 use std::os::raw::c_char;
 
-use crate::webrtc;
-use crate::webrtc::ffi::ice_gatherer::RffiIceGatherer;
-use crate::webrtc::media::RffiAudioEncoderConfig;
-use crate::webrtc::network::{RffiIp, RffiIpPort};
-use crate::webrtc::peer_connection::{RffiAudioLevel, RffiReceivedAudioLevel};
-use crate::webrtc::rtp;
-use crate::webrtc::sdp_observer::{
-    RffiCreateSessionDescriptionObserver, RffiSessionDescription, RffiSetSessionDescriptionObserver,
+use crate::{
+    webrtc,
+    webrtc::{
+        ffi::ice_gatherer::RffiIceGatherer,
+        media::RffiAudioEncoderConfig,
+        network::{RffiIp, RffiIpPort},
+        peer_connection::{RffiAudioLevel, RffiReceivedAudioLevel},
+        rtp,
+        sdp_observer::{
+            RffiCreateSessionDescriptionObserver, RffiSessionDescription,
+            RffiSetSessionDescriptionObserver,
+        },
+        stats_observer::RffiStatsObserver,
+    },
 };
-use crate::webrtc::stats_observer::RffiStatsObserver;
 
 /// Incomplete type for C++ PeerConnection.
 #[repr(C)]
@@ -77,12 +82,6 @@ extern "C" {
         enabled: bool,
     );
 
-    pub fn Rust_setIncomingAudioMuted(
-        peer_connection: webrtc::ptr::BorrowedRc<RffiPeerConnection>,
-        ssrc: u32,
-        muted: bool,
-    );
-
     pub fn Rust_addIceCandidateFromSdp(
         peer_connection: webrtc::ptr::BorrowedRc<RffiPeerConnection>,
         sdp: webrtc::ptr::Borrowed<c_char>,
@@ -93,6 +92,7 @@ extern "C" {
         ip: RffiIp,
         port: u16,
         tcp: bool,
+        hostname: webrtc::ptr::Borrowed<c_char>,
     ) -> bool;
 
     pub fn Rust_removeIceCandidates(

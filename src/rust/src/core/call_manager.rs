@@ -5,45 +5,55 @@
 
 //! The main Call Manager object definitions.
 
-use std::cmp::Ordering;
-use std::collections::{HashMap, HashSet, VecDeque};
-use std::fmt;
-use std::stringify;
-use std::sync::{Arc, MutexGuard};
-use std::thread;
-use std::time::{Duration, Instant, SystemTime};
-
 #[cfg(feature = "sim")]
 use std::sync::{Condvar, Mutex};
+use std::{
+    cmp::Ordering,
+    collections::{HashMap, HashSet, VecDeque},
+    fmt, stringify,
+    sync::{Arc, MutexGuard},
+    thread,
+    time::{Duration, Instant, SystemTime},
+};
 
 use bytes::{Bytes, BytesMut};
 use lazy_static::lazy_static;
 use prost::Message;
 
-use crate::common::actor::{Actor, Stopper};
-use crate::common::{
-    ApplicationEvent, CallConfig, CallDirection, CallId, CallMediaType, CallState, DataMode,
-    DeviceId, Result, RingBench,
+use crate::{
+    common::{
+        actor::{Actor, Stopper},
+        ApplicationEvent, CallConfig, CallDirection, CallId, CallMediaType, CallState, DataMode,
+        DeviceId, Result, RingBench,
+    },
+    core::{
+        call::Call,
+        call_mutex::CallMutex,
+        connection::{Connection, ConnectionType},
+        group_call,
+        group_call::{Client, ClientStartParams, GroupCallKind, HttpSfuClient, Observer, Reaction},
+        platform::Platform,
+        signaling,
+        signaling::ReceivedOffer,
+        util::{try_scoped, uuid_to_string},
+    },
+    error::RingRtcError,
+    lite::{
+        call_links::{self, CallLinkMemberResolver, CallLinkRootKey},
+        http,
+        sfu::{
+            self, DemuxId, GroupMember, MemberMap, MembershipProof, ObfuscatedResolver, PeekInfo,
+            UserId,
+        },
+    },
+    protobuf,
+    webrtc::{
+        media::{AudioTrack, MediaStream, VideoSink, VideoTrack},
+        peer_connection::{AudioLevel, ReceivedAudioLevel},
+        peer_connection_factory::PeerConnectionFactory,
+        peer_connection_observer::NetworkRoute,
+    },
 };
-use crate::core::call::Call;
-use crate::core::call_mutex::CallMutex;
-use crate::core::connection::{Connection, ConnectionType};
-use crate::core::group_call::{HttpSfuClient, Observer, Reaction};
-use crate::core::platform::Platform;
-use crate::core::signaling::ReceivedOffer;
-use crate::core::util::{try_scoped, uuid_to_string};
-use crate::core::{group_call, signaling};
-use crate::error::RingRtcError;
-use crate::lite::call_links::{self, CallLinkRootKey};
-use crate::lite::{
-    http, sfu,
-    sfu::{DemuxId, GroupMember, MembershipProof, PeekInfo, UserId},
-};
-use crate::protobuf;
-use crate::webrtc::media::{AudioTrack, MediaStream, VideoSink, VideoTrack};
-use crate::webrtc::peer_connection::{AudioLevel, ReceivedAudioLevel};
-use crate::webrtc::peer_connection_factory::PeerConnectionFactory;
-use crate::webrtc::peer_connection_observer::NetworkRoute;
 
 pub const MAX_MESSAGE_AGE: Duration = Duration::from_secs(60);
 const TIME_OUT_PERIOD: Duration = Duration::from_secs(60);
@@ -346,6 +356,17 @@ pub fn validate_call_message_as_opaque_ring(
     }
 }
 
+/// A wrapper for group call and call link clients.
+#[derive(Clone)]
+struct GroupCallClient {
+    /// The underlying group call or call link client.
+    client: group_call::Client,
+    /// Flag to indicate if the client is active or not. For a specific group, duplicate
+    /// clients can exist, but only one of those can be active at a time. A client is
+    /// considered `active` until the UI initiates a `disconnect`.
+    active: bool,
+}
+
 pub struct CallManager<T>
 where
     T: Platform,
@@ -361,7 +382,7 @@ where
     /// 1:1 call messages that arrived before the Offer for a particular call.
     pending_call_messages: Arc<CallMutex<PendingCallMessages>>,
     /// Map of all group calls.
-    group_call_by_client_id: Arc<CallMutex<HashMap<group_call::ClientId, group_call::Client>>>,
+    group_call_by_client_id: Arc<CallMutex<HashMap<group_call::ClientId, GroupCallClient>>>,
     /// Next value of the group call client id (sequential).
     next_group_call_client_id: Arc<CallMutex<u32>>,
     /// Recent outstanding group rings, keyed by group ID.
@@ -824,9 +845,9 @@ where
             }
 
             let mut group_calls = self.group_call_by_client_id.lock()?.clone();
-            for (client_id, call) in group_calls.iter_mut() {
+            for (client_id, group_call) in group_calls.iter_mut() {
                 info!("synchronize(): syncing group call: {}", client_id);
-                call.synchronize();
+                group_call.client.synchronize();
             }
 
             self.sync_worker_thread()?;
@@ -1074,7 +1095,7 @@ where
                     let mut call = Call::new(
                         remote_peer,
                         call_id,
-                        CallDirection::OutGoing,
+                        CallDirection::Outgoing,
                         call_media_type,
                         local_device_id,
                         self.clone(),
@@ -1275,10 +1296,9 @@ where
             RingBench::App,
             RingBench::Cm,
             format!(
-                "received_offer()\t{}\t{}\tprimary={}\t{}\t{}",
+                "received_offer()\t{}\t{}\t{}\t{}",
                 incoming_call_id,
                 received.sender_device_id,
-                received.receiver_device_is_primary,
                 received.offer.to_info_string(),
                 received.receiver_device_id,
             )
@@ -1318,7 +1338,7 @@ where
         let mut incoming_call = Call::new(
             remote_peer.clone(),
             incoming_call_id,
-            CallDirection::InComing,
+            CallDirection::Incoming,
             received.offer.call_media_type,
             received.receiver_device_id,
             self.clone(),
@@ -1495,7 +1515,7 @@ where
                 active_call.inject_received_ice(received)?;
             }
             Ok(active_call) => {
-                if active_call.direction() == CallDirection::OutGoing {
+                if active_call.direction() == CallDirection::Outgoing {
                     // Save the ICE candidates anyway, in case we have a glare scenario.
                     self.pending_call_messages
                         .lock()?
@@ -1537,7 +1557,7 @@ where
                 active_call.inject_received_hangup(received)?;
             }
             Ok(active_call) => {
-                if active_call.direction() == CallDirection::OutGoing {
+                if active_call.direction() == CallDirection::Outgoing {
                     // Save the hangup anyway, in case we have a glare scenario.
                     self.pending_call_messages
                         .lock()?
@@ -1721,11 +1741,13 @@ where
                         .group_call_by_client_id
                         .lock()
                         .expect("lock group_call_by_client_id");
-                    let group_call = group_calls.values().find(|c| &c.group_id == group_id);
+                    let group_call = group_calls
+                        .values()
+                        .find(|c| &c.client.group_id == group_id && c.active);
                     match group_call {
-                        Some(call) => {
-                            call.on_signaling_message_received(sender_uuid, group_call_message)
-                        }
+                        Some(group_call) => group_call
+                            .client
+                            .on_signaling_message_received(sender_uuid, group_call_message),
                         None => warn!("Received signaling message for unknown group ID"),
                     };
                 }
@@ -1763,8 +1785,10 @@ where
             if let Ok(mut group_calls) = self.group_call_by_client_id.lock() {
                 group_calls
                     .values_mut()
-                    .filter(|call| call.group_id == group_id)
-                    .for_each(|call| call.provide_ring_id_if_absent(ring_id))
+                    .filter(|group_call| {
+                        group_call.client.group_id == group_id && group_call.active
+                    })
+                    .for_each(|group_call| group_call.client.provide_ring_id_if_absent(ring_id))
             } else {
                 // Ignore the failure to lock; it's more important that we cancel the ring.
             }
@@ -2592,6 +2616,15 @@ where
         );
     }
 
+    fn handle_speaking_notification(
+        &mut self,
+        client_id: group_call::ClientId,
+        event: group_call::SpeechEvent,
+    ) {
+        info!("handle_speaking_notification():");
+        platform_handler!(self, handle_speaking_notification, client_id, event);
+    }
+
     fn handle_audio_levels(
         &self,
         client_id: group_call::ClientId,
@@ -2621,6 +2654,10 @@ where
     fn handle_raised_hands(&self, client_id: group_call::ClientId, raised_hands: Vec<DemuxId>) {
         info!("handle_raised_hands(): {:?}", raised_hands);
         platform_handler!(self, handle_raised_hands, client_id, raised_hands);
+    }
+
+    fn handle_rtc_stats_report(&self, report_json: String) {
+        platform_handler!(self, handle_rtc_stats_report, report_json);
     }
 
     fn handle_ended(&self, client_id: group_call::ClientId, reason: group_call::EndReason) {
@@ -2709,6 +2746,7 @@ where
                 None,
                 auth_header,
                 Arc::new(member_resolver),
+                None,
                 Box::new(move |peek_result| {
                     info!("handle_peek_response");
                     platform_handler!(call_manager, handle_peek_result, request_id, peek_result);
@@ -2738,6 +2776,18 @@ where
             sfu_url
         );
 
+        let mut client_by_id = self.group_call_by_client_id.lock()?;
+        if let Some((client_id, _)) = client_by_id
+            .iter()
+            .find(|(_, c)| c.client.group_id == group_id && c.active)
+        {
+            error!(
+                "Group Client already exists for group_id with id: {}",
+                client_id
+            );
+            return Err(anyhow::anyhow!(RingRtcError::ClientAlreadyExistsForCall));
+        }
+
         let client_id = {
             let mut next_group_call_client_id = self.next_group_call_client_id.lock()?;
             if *next_group_call_client_id == group_call::INVALID_CLIENT_ID {
@@ -2764,24 +2814,33 @@ where
             None,
             hkdf_extra_info,
         );
-        let client = group_call::Client::start(
+
+        let obfuscated_resolver = ObfuscatedResolver::new(Arc::new(MemberMap::new(&[])), None);
+
+        let client = Client::start(ClientStartParams {
             group_id,
             client_id,
-            group_call::GroupCallKind::SignalGroup,
-            Box::new(sfu_client),
-            Box::new(self.clone()),
-            self.busy.clone(),
-            self.self_uuid.clone(),
+            kind: GroupCallKind::SignalGroup,
+            sfu_client: Box::new(sfu_client),
+            observer: Box::new(self.clone()),
+            obfuscated_resolver,
+            busy: self.busy.clone(),
+            self_uuid: self.self_uuid.clone(),
             peer_connection_factory,
             outgoing_audio_track,
-            Some(outgoing_video_track),
+            outgoing_video_track: Some(outgoing_video_track),
             incoming_video_sink,
             ring_id,
             audio_levels_interval,
-        )?;
+        })?;
 
-        let mut client_by_id = self.group_call_by_client_id.lock()?;
-        client_by_id.insert(client_id, client);
+        client_by_id.insert(
+            client_id,
+            GroupCallClient {
+                client,
+                active: true,
+            },
+        );
 
         info!("Group Client created with id: {}", client_id);
 
@@ -2811,6 +2870,18 @@ where
             sfu_url
         );
 
+        let mut client_by_id = self.group_call_by_client_id.lock()?;
+        if let Some((client_id, _)) = client_by_id
+            .iter()
+            .find(|(_, c)| c.client.group_id == room_id && c.active)
+        {
+            error!(
+                "Call Link Client already exists for room_id with id: {}",
+                client_id
+            );
+            return Err(anyhow::anyhow!(RingRtcError::ClientAlreadyExistsForCall));
+        }
+
         let client_id = {
             let mut next_group_call_client_id = self.next_group_call_client_id.lock()?;
             if *next_group_call_client_id == group_call::INVALID_CLIENT_ID {
@@ -2820,6 +2891,8 @@ where
             *next_group_call_client_id = next_group_call_client_id.wrapping_add(1);
             client_id
         };
+
+        let member_resolver = Arc::new(CallLinkMemberResolver::from(&root_key));
 
         let mut sfu_client = HttpSfuClient::new(
             Box::new(self.http_client.clone()),
@@ -2831,27 +2904,34 @@ where
         sfu_client.set_auth_header(call_links::auth_header_from_auth_credential(
             auth_presentation,
         ));
-        sfu_client.set_member_resolver(Arc::new(call_links::CallLinkMemberResolver::from(
-            &root_key,
-        )));
-        let client = group_call::Client::start(
-            room_id,
+        sfu_client.set_member_resolver(member_resolver.clone());
+
+        let obfuscated_resolver = ObfuscatedResolver::new(member_resolver, Some(root_key));
+
+        let client = Client::start(ClientStartParams {
+            group_id: room_id,
             client_id,
-            group_call::GroupCallKind::CallLink,
-            Box::new(sfu_client),
-            Box::new(self.clone()),
-            self.busy.clone(),
-            self.self_uuid.clone(),
+            kind: GroupCallKind::CallLink,
+            sfu_client: Box::new(sfu_client),
+            observer: Box::new(self.clone()),
+            obfuscated_resolver,
+            busy: self.busy.clone(),
+            self_uuid: self.self_uuid.clone(),
             peer_connection_factory,
             outgoing_audio_track,
-            Some(outgoing_video_track),
+            outgoing_video_track: Some(outgoing_video_track),
             incoming_video_sink,
-            None,
+            ring_id: None,
             audio_levels_interval,
-        )?;
+        })?;
 
-        let mut client_by_id = self.group_call_by_client_id.lock()?;
-        client_by_id.insert(client_id, client);
+        client_by_id.insert(
+            client_id,
+            GroupCallClient {
+                client,
+                active: true,
+            },
+        );
 
         info!("Call Link Client created with id: {}", client_id);
 
@@ -2884,15 +2964,23 @@ where
 
 /// Example: `forward_group_call_api(group_ring => ring(recipient: Option<UserId>));`
 macro_rules! forward_group_call_api {
-    ($name:ident => $api:ident($($arg:ident: $arg_ty:ty),* $(,)?)) => {
+    ($name:ident => $api:ident($($arg:ident: $arg_ty:ty),* $(,)?), $log:expr) => {
         pub fn $name(&mut self, client_id: group_call::ClientId, $($arg: $arg_ty),*) {
-            info!("{}(): id: {}", stringify!($name), client_id);
+            if $log {
+                info!("{}(): id: {}", stringify!($name), client_id);
+            }
             self.with_group_call(client_id, |group_call| group_call.$api($($arg),*));
         }
     };
+    ($name:ident => $api:ident($($arg:ident: $arg_ty:ty),* $(,)?)) => {
+        forward_group_call_api!($name => $api($($arg: $arg_ty),*), true);
+    };
+    ($api:ident($($arg:ident: $arg_ty:ty),* $(,)?), $log:expr) => {
+        forward_group_call_api!($api => $api($($arg: $arg_ty),*), $log);
+    };
     ($api:ident($($arg:ident: $arg_ty:ty),* $(,)?)) => {
-        forward_group_call_api!($api => $api($($arg: $arg_ty),*));
-    }
+        forward_group_call_api!($api => $api($($arg: $arg_ty),*), true);
+    };
 }
 
 impl<T> CallManager<T>
@@ -2910,7 +2998,7 @@ where
                 let group_call = group_call_map.get_mut(&client_id);
                 match group_call {
                     Some(group_call) => {
-                        use_group_call(group_call);
+                        use_group_call(&mut group_call.client);
                     }
                     None => {
                         warn!("Group Client not found for id: {}", client_id);
@@ -2928,7 +3016,6 @@ where
     forward_group_call_api!(leave());
     forward_group_call_api!(react(value: String));
     forward_group_call_api!(raise_hand(raise: bool));
-    forward_group_call_api!(disconnect());
     forward_group_call_api!(group_ring => ring(recipient: Option<UserId>));
     forward_group_call_api!(set_outgoing_audio_muted(muted: bool));
     forward_group_call_api!(set_outgoing_video_muted(muted: bool));
@@ -2939,19 +3026,48 @@ where
     forward_group_call_api!(request_video(
         rendered_resolutions: Vec<group_call::VideoRequest>,
         active_speaker_height: u16,
-    ));
+    ), false);
     forward_group_call_api!(approve_user(user_id: UserId));
     forward_group_call_api!(deny_user(user_id: UserId));
     forward_group_call_api!(remove_client(other_client_id: DemuxId));
     forward_group_call_api!(block_client(other_client_id: DemuxId));
     forward_group_call_api!(set_group_members(members: Vec<GroupMember>));
     forward_group_call_api!(set_membership_proof(proof: Vec<u8>));
+    forward_group_call_api!(set_rtc_stats_interval(interval: Duration));
+
+    pub fn disconnect(&mut self, client_id: group_call::ClientId) {
+        info!("disconnect(): id: {}", client_id);
+
+        let group_call_map = self.group_call_by_client_id.lock();
+        match group_call_map {
+            Ok(mut group_call_map) => {
+                let group_call = group_call_map.get_mut(&client_id);
+                match group_call {
+                    Some(group_call) => {
+                        // When the UI wants to disconnect(), we assume that the call is
+                        // not active on the UI anymore, so we will mark it as not active
+                        // (the group call client won't receive messages anymore).
+                        group_call.active = false;
+                        group_call.client.disconnect();
+                    }
+                    None => {
+                        warn!("Group Client not found for id: {}", client_id);
+                    }
+                }
+            }
+            Err(error) => {
+                error!("{}", error);
+            }
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use protobuf::signaling::call_message::ring_intention::Type as IntentionType;
-    use protobuf::signaling::{call_message::RingIntention, CallMessage};
+    use protobuf::signaling::{
+        call_message::{ring_intention::Type as IntentionType, RingIntention},
+        CallMessage,
+    };
 
     use super::*;
 
@@ -2963,7 +3079,6 @@ mod tests {
                 age,
                 sender_device_id: 1,
                 receiver_device_id: 1,
-                receiver_device_is_primary: true,
                 sender_identity_key: vec![],
                 receiver_identity_key: vec![],
             }

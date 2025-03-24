@@ -1,0 +1,25 @@
+#
+# Copyright 2024 Signal Messenger, LLC
+# SPDX-License-Identifier: AGPL-3.0-only
+#
+
+[package]
+name = "protobuf"
+edition = "2021"
+version.workspace = true
+authors.workspace = true
+license = "AGPL-3.0-only"
+
+[lib]
+name = "protobuf"
+path = "src/lib.rs"
+proc-macro = true
+
+[features]
+default = ["signaling"]
+signaling = []
+call_sim = ["signaling"]
+
+[build-dependencies]
+prost-build = "0.13.5"
+tonic-build = "0.12.3"

@@ -228,7 +228,7 @@ impl CallState {
             CallState::NotYetStarted => false,
 
             // Not sure why these are true, but they preserve logic during refactoring.
-            // Since the messasge won't go anywhere, we should consider removing it.
+            // Since the message won't go anywhere, we should consider removing it.
             CallState::WaitingToProceed => true,
             CallState::ConnectingBeforeAccepted => true,
             CallState::ConnectingAfterAccepted => true,
@@ -239,12 +239,12 @@ impl CallState {
             CallState::Terminating => true,
 
             // Not sure why this is true, but it preserves logic during refactoring.
-            // Since the messasge won't go anywhere, we should consider removing it.
+            // Since the message won't go anywhere, we should consider removing it.
             CallState::Terminated => true,
         }
     }
 
-    pub fn should_propogate_hangup(self) -> bool {
+    pub fn should_propagate_hangup(self) -> bool {
         match self {
             CallState::NotYetStarted => false,
 
@@ -362,6 +362,12 @@ pub enum ApplicationEvent {
 
     /// The call ended because the application wanted to drop the call.
     EndedAppDroppedCall,
+
+    /// The remote side has enabled audio.
+    RemoteAudioEnable,
+
+    /// The remote side has disabled audio.
+    RemoteAudioDisable,
 
     /// The remote side has enabled video.
     RemoteVideoEnable,
@@ -661,10 +667,10 @@ impl ConnectionState {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CallDirection {
     /// Incoming call.
-    InComing = 0,
+    Incoming = 0,
 
     /// Outgoing call.
-    OutGoing,
+    Outgoing,
 }
 
 impl fmt::Display for CallDirection {
@@ -676,8 +682,8 @@ impl fmt::Display for CallDirection {
 impl CallDirection {
     pub fn from_i32(value: i32) -> Self {
         match value {
-            0 => CallDirection::InComing,
-            1 => CallDirection::OutGoing,
+            0 => CallDirection::Incoming,
+            1 => CallDirection::Outgoing,
             _ => panic!("Unknown value: {}", value),
         }
     }
@@ -767,7 +773,6 @@ pub struct CallConfig {
     pub audio_config: AudioConfig,
     pub audio_encoder_config: AudioEncoderConfig,
     pub enable_tcc_audio: bool,
-    pub enable_red_audio: bool,
     pub audio_jitter_buffer_config: AudioJitterBufferConfig,
     pub audio_rtcp_report_interval_ms: i32,
 
@@ -783,7 +788,6 @@ impl Default for CallConfig {
             audio_config: Default::default(),
             audio_encoder_config: Default::default(),
             enable_tcc_audio: false,
-            enable_red_audio: false,
             audio_jitter_buffer_config: Default::default(),
             audio_rtcp_report_interval_ms: 5000,
             enable_vp9: true,

@@ -5,33 +5,42 @@
 
 //! Android Platform Interface.
 
-use std::collections::HashSet;
-use std::fmt;
-use std::sync::Arc;
-use std::time::{Duration, SystemTime};
-
-use jni::objects::{AutoLocal, GlobalRef, JObject, JValue};
-use jni::sys::{jint, jlong, jshort};
-use jni::{JNIEnv, JavaVM};
-
-use crate::android::error::AndroidError;
-use crate::android::jni_util::*;
-use crate::android::webrtc_java_media_stream::JavaMediaStream;
-use crate::common::{
-    ApplicationEvent, CallConfig, CallDirection, CallId, CallMediaType, DeviceId, Result,
+use std::{
+    collections::HashSet,
+    fmt,
+    sync::Arc,
+    time::{Duration, SystemTime},
 };
-use crate::core::call::Call;
-use crate::core::connection::{Connection, ConnectionType};
-use crate::core::platform::{Platform, PlatformItem};
-use crate::core::{group_call, signaling};
-use crate::lite::call_links::{CallLinkRestrictions, CallLinkState, Empty};
-use crate::lite::{
-    http, sfu,
-    sfu::{DemuxId, PeekInfo, PeekResult, UserId},
+
+use jni::{
+    objects::{AutoLocal, GlobalRef, JObject, JValue},
+    sys::{jint, jlong, jshort},
+    JNIEnv, JavaVM,
 };
-use crate::webrtc::media::{MediaStream, VideoTrack};
-use crate::webrtc::peer_connection::{AudioLevel, ReceivedAudioLevel};
-use crate::webrtc::peer_connection_observer::NetworkRoute;
+
+use crate::{
+    android::{error::AndroidError, jni_util::*, webrtc_java_media_stream::JavaMediaStream},
+    common::{
+        ApplicationEvent, CallConfig, CallDirection, CallId, CallMediaType, DeviceId, Result,
+    },
+    core::{
+        call::Call,
+        connection::{Connection, ConnectionType},
+        group_call,
+        platform::{Platform, PlatformItem},
+        signaling,
+    },
+    lite::{
+        call_links::{CallLinkRestrictions, CallLinkState, Empty},
+        http, sfu,
+        sfu::{DemuxId, PeekInfo, PeekResult, UserId},
+    },
+    webrtc::{
+        media::{MediaStream, VideoTrack},
+        peer_connection::{AudioLevel, ReceivedAudioLevel},
+        peer_connection_observer::NetworkRoute,
+    },
+};
 
 const RINGRTC_PACKAGE: &str = jni_class_name!(org.signal.ringrtc);
 const CALL_LINK_STATE_CLASS: &str = jni_class_name!(org.signal.ringrtc.CallLinkState);
@@ -314,8 +323,8 @@ impl Platform for AndroidPlatform {
         let jni_remote = remote_peer.as_obj();
         let call_id_jlong = u64::from(call_id) as jlong;
         let is_outgoing = match direction {
-            CallDirection::OutGoing => true,
-            CallDirection::InComing => false,
+            CallDirection::Outgoing => true,
+            CallDirection::Incoming => false,
         };
         let jni_call_media_type = match self.java_enum(
             env,
@@ -1016,6 +1025,38 @@ impl Platform for AndroidPlatform {
         }
     }
 
+    fn handle_speaking_notification(
+        &self,
+        client_id: group_call::ClientId,
+        event: group_call::SpeechEvent,
+    ) {
+        info!(
+            "handle_speaking_notification(): client_id {}, event: {:?}",
+            client_id, event
+        );
+
+        if let Ok(env) = &mut self.java_env() {
+            let jni_speech_event =
+                match self.java_enum(env, GROUP_CALL_CLASS, "SpeechEvent", event.ordinal()) {
+                    Ok(v) => AutoLocal::new(v, env),
+                    Err(error) => {
+                        error!("{:?}", error);
+                        return;
+                    }
+                };
+
+            let _ = jni_call_method(
+                env,
+                self.jni_call_manager.as_obj(),
+                "handleSpeakingNotification",
+                jni_args!((
+                    client_id as jlong => long,
+                    jni_speech_event => org.signal.ringrtc.GroupCall::SpeechEvent
+                ) -> void),
+            );
+        }
+    }
+
     fn handle_audio_levels(
         &self,
         client_id: group_call::ClientId,
@@ -1512,8 +1553,9 @@ impl AndroidPlatform {
             jni_class_name!(org.signal.ringrtc.CallManager::HangupType),
             jni_class_name!(org.signal.ringrtc.CallManager::HttpMethod),
             jni_class_name!(org.signal.ringrtc.GroupCall::ConnectionState),
-            jni_class_name!(org.signal.ringrtc.GroupCall::JoinState),
             jni_class_name!(org.signal.ringrtc.GroupCall::GroupCallEndReason),
+            jni_class_name!(org.signal.ringrtc.GroupCall::JoinState),
+            jni_class_name!(org.signal.ringrtc.GroupCall::SpeechEvent),
             CALL_LINK_STATE_CLASS,
             HTTP_HEADER_CLASS,
             HTTP_RESULT_CLASS,
@@ -1748,56 +1790,23 @@ impl AndroidPlatform {
 
         let result_object = match response {
             Ok(result) => {
-                let call_link_state_class = match self.class_cache.get_class(CALL_LINK_STATE_CLASS)
-                {
-                    Ok(v) => v,
-                    Err(error) => {
-                        error!("call_link_state_class: {:?}", error);
-                        return;
-                    }
-                };
-
-                let name_object = match env.new_string(result.name) {
-                    Ok(v) => v,
-                    Err(error) => {
-                        error!("convert name: {:?}", error);
-                        return;
-                    }
-                };
-                let raw_restrictions: jint = match result.restrictions {
-                    CallLinkRestrictions::None => 0,
-                    CallLinkRestrictions::AdminApproval => 1,
-                    CallLinkRestrictions::Unknown => -1,
-                };
-                let expiration_in_epoch_seconds = result
-                    .expiration
-                    .duration_since(SystemTime::UNIX_EPOCH)
-                    .unwrap_or_default()
-                    .as_secs();
-
-                let args = jni_args!((
-                    name_object => java.lang.String,
-                    raw_restrictions => int,
-                    result.revoked => boolean,
-                    expiration_in_epoch_seconds as jlong => long,
-                ) -> void);
-                let call_link_state_object =
-                    match env.new_object(call_link_state_class, args.sig, &args.args) {
-                        Ok(v) => v,
-                        Err(error) => {
-                            error!("new CallLinkState: {:?}", error);
-                            return;
+                let call_link_state = Some(result);
+                match self.make_call_link_state_object(&mut env, &call_link_state) {
+                    Ok(state) => {
+                        // Unconstrained generics get erased to java.lang.Object.
+                        let args = jni_args!((
+                            state => java.lang.Object,
+                        ) -> void);
+                        match env.new_object(http_result_class, args.sig, &args.args) {
+                            Ok(v) => v,
+                            Err(error) => {
+                                error!("new HttpResult(CallLinkState): {:?}", error);
+                                return;
+                            }
                         }
-                    };
-
-                // Unconstrained generics get erased to java.lang.Object.
-                let args = jni_args!((
-                    call_link_state_object => java.lang.Object,
-                ) -> void);
-                match env.new_object(http_result_class, args.sig, &args.args) {
-                    Ok(v) => v,
+                    }
                     Err(error) => {
-                        error!("new HttpResult(CallLinkState): {:?}", error);
+                        error!("new CallLinkState: {:?}", error);
                         return;
                     }
                 }
@@ -1907,6 +1916,49 @@ impl AndroidPlatform {
         }
     }
 
+    fn make_call_link_state_object<'a>(
+        &self,
+        env: &mut JNIEnv<'a>,
+        call_link_state: &Option<CallLinkState>,
+    ) -> jni::errors::Result<JObject<'a>> {
+        match call_link_state {
+            None => Ok(JObject::null()),
+            Some(state) => {
+                let call_link_state_class = match self.class_cache.get_class(CALL_LINK_STATE_CLASS)
+                {
+                    Ok(v) => v,
+                    Err(error) => {
+                        error!("call_link_state_class: {:?}", error);
+                        return Ok(JObject::null());
+                    }
+                };
+
+                let name_object = JObject::from(env.new_string(state.name.clone())?);
+
+                let raw_restrictions: jint = match state.restrictions {
+                    CallLinkRestrictions::None => 0,
+                    CallLinkRestrictions::AdminApproval => 1,
+                    CallLinkRestrictions::Unknown => -1,
+                };
+                let expiration_in_epoch_seconds = state
+                    .expiration
+                    .duration_since(SystemTime::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs();
+
+                let args = jni_args!((
+                    name_object => java.lang.String,
+                    raw_restrictions => int,
+                    state.revoked => boolean,
+                    expiration_in_epoch_seconds as jlong => long,
+                ) -> void);
+
+                let object = env.new_object(call_link_state_class, args.sig, &args.args);
+                object
+            }
+        }
+    }
+
     fn make_peek_info_object<'a>(
         &self,
         env: &mut JNIEnv<'a>,
@@ -1968,6 +2020,15 @@ impl AndroidPlatform {
             }
         }
 
+        let jni_call_link_state =
+            match self.make_call_link_state_object(env, &peek_info.call_link_state) {
+                Ok(value) => value,
+                Err(e) => {
+                    error!("make_call_link_state_object: {:?}", e);
+                    return Ok(JObject::null());
+                }
+            };
+
         let args = jni_args!((
             joined_member_list => java.util.List,
             jni_creator => [byte],
@@ -1976,6 +2037,7 @@ impl AndroidPlatform {
             jni_device_count_including_pending => long,
             jni_device_count_excluding_pending => long,
             pending_user_list => java.util.List,
+            jni_call_link_state => org.signal.ringrtc.CallLinkState,
         ) -> org.signal.ringrtc.PeekInfo);
         let result = env.call_static_method(
             self.class_cache.get_class(PEEK_INFO_CLASS)?,

@@ -3,6 +3,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //
 
+use std::{process::Stdio, time::Duration};
+
 use anyhow::Result;
 use bollard::{
     container::{MemoryStatsStats, Stats, StatsOptions},
@@ -10,14 +12,19 @@ use bollard::{
 };
 use chrono::DateTime;
 use futures_util::stream::TryStreamExt;
-use std::process::Stdio;
-use tokio::fs::OpenOptions;
-use tokio::io::{stdout, AsyncWriteExt};
-use tokio::process::Command;
+use itertools::Itertools;
+use tokio::{
+    fs::OpenOptions,
+    io::{stdout, AsyncWriteExt},
+    process::Command,
+};
 
-use crate::common::{
-    CallConfig, CallProfile, DelayVariationStrategy, GeLossModel, Loss, MarkovLossModel,
-    NetworkConfig,
+use crate::{
+    common::{
+        CallConfig, CallProfile, ClientProfile, DelayVariationStrategy, GeLossModel, Loss,
+        MarkovLossModel, NetworkConfig,
+    },
+    test::{CallTypeConfig, MediaFileIo},
 };
 
 /// This function builds all docker images that we need.
@@ -43,8 +50,15 @@ pub async fn build_images() -> Result<()> {
     println!("signaling-server:");
     stdout().flush().await?;
     let _ = Command::new("docker")
-        .current_dir("call_sim/docker/signaling_server")
-        .args(["build", "-t", "signaling-server", "-q", "."])
+        .args([
+            "build",
+            "-t",
+            "signaling-server",
+            "-q",
+            "-f",
+            "call_sim/docker/signaling_server/Dockerfile",
+            ".",
+        ])
         .spawn()?
         .wait()
         .await?;
@@ -662,35 +676,54 @@ pub async fn emulate_network_clear(name: &str) -> Result<()> {
 
 pub async fn start_cli(
     name: &str,
-    input_file: &str,
-    output_file: &str,
-    input_video_file: Option<&str>,
-    output_video_file: Option<&str>,
+    media_io: MediaFileIo,
     call_config: &CallConfig,
     remote_call_config: &CallConfig,
+    client_profile: &ClientProfile,
+    call_type: &CallTypeConfig,
+    profile: bool,
 ) -> Result<()> {
     println!("Starting cli for `{}`", name);
-
     let log_file_arg = format!("/report/{}.log", name);
-    let input_file_arg = format!("/media/{}", input_file);
-    let output_file_arg = format!("/report/{}", output_file);
+    let input_file_arg = format!("/media/{}", media_io.audio_input_file);
 
-    let mut args = [
-        "exec",
-        "-d",
-        name,
-        "call_sim-cli",
-        "--name",
-        name,
-        "--log-file",
-        &log_file_arg,
-        "--input-file",
-        &input_file_arg,
-        "--output-file",
-        &output_file_arg,
-    ]
-    .map(String::from)
-    .to_vec();
+    let mut args = ["exec", "-d", name].map(String::from).to_vec();
+
+    if profile {
+        let perf_arg = format!("--output=/report/{}.perf", name);
+
+        args.extend_from_slice(
+            &[
+                "perf",
+                "record",
+                "-e",
+                "cycles",
+                "--call-graph=dwarf",
+                "-F",
+                "1499",
+                "--user-callchains",
+                "--sample-cpu",
+                &perf_arg,
+            ]
+            .map(String::from),
+        );
+    }
+
+    args.extend_from_slice(
+        &[
+            "call_sim-cli",
+            "--name",
+            name,
+            "--log-file",
+            &log_file_arg,
+            "--input-file",
+            &input_file_arg,
+        ]
+        .map(String::from),
+    );
+    if let Some(audio_output_file) = media_io.audio_output_file {
+        args.push(format!("--output-file=/report/{}", audio_output_file));
+    }
 
     args.push("--stats-interval-secs".to_string());
     args.push(format!("{}", call_config.stats_interval_secs));
@@ -736,7 +769,6 @@ pub async fn start_cli(
     args.push(format!("--fec={}", call_config.audio.enable_fec));
 
     args.push(format!("--tcc={}", call_config.audio.enable_tcc));
-    args.push(format!("--red={}", call_config.audio.enable_red));
 
     args.push(format!("--vp9={}", call_config.video.enable_vp9));
 
@@ -788,10 +820,10 @@ pub async fn start_cli(
         call_config.audio.rtcp_report_interval_ms
     ));
 
-    if let Some(input_video_file) = input_video_file {
+    if let Some(input_video_file) = media_io.video_input_file {
         args.push(format!("--input-video-file=/media/{}", input_video_file));
     }
-    if let Some(output_video_file) = output_video_file {
+    if let Some(output_video_file) = media_io.video_output_file {
         args.push(format!("--output-video-file=/report/{}", output_video_file));
     }
 
@@ -812,8 +844,100 @@ pub async fn start_cli(
 
     args.extend(call_config.extra_cli_args.iter().cloned());
 
+    args.push(format!("--user-id={}", client_profile.user_id));
+    args.push(format!("--device-id={}", client_profile.device_id));
+    if let CallTypeConfig::Group {
+        sfu_url,
+        group_name,
+    } = call_type
+    {
+        args.push(format!("--sfu-url={}", sfu_url));
+        args.push("--is-group-call".to_string());
+
+        let group = if let Some(group_name) = group_name {
+            client_profile
+                .groups
+                .iter()
+                .filter(|&g| group_name == &g.name)
+                .exactly_one()
+                .map_err(|_| {
+                    anyhow::anyhow!("Did't find exactly one group named: {:?}", group_name)
+                })?
+        } else {
+            client_profile
+                .groups
+                .first()
+                .expect("at least one group info detailed")
+        };
+        args.push(format!("--group-id={}", group.id));
+        args.push(format!("--membership-proof={}", group.membership_proof));
+
+        let member_info = group
+            .members
+            .iter()
+            .map(|member| format!("{}:{}", member.user_id, member.member_id))
+            .join(",");
+        args.push(format!("--group-member-info={}", member_info));
+    }
+
+    println!("Final Client args: {}", args.join(" "));
     let _ = Command::new("docker").args(&args).spawn()?.wait().await?;
 
+    Ok(())
+}
+
+pub async fn finish_perf(client: &str) -> Result<()> {
+    let mut exited = false;
+    for _ in 0..60 {
+        let status = Command::new("docker")
+            .args(["exec", client, "pgrep", "perf"])
+            .stdout(Stdio::null())
+            .spawn()?
+            .wait()
+            .await?;
+        if !status.success() {
+            // if we couldn't find it, it exited; otherwise keep waiting.
+            exited = true;
+            let perf_command = format!(
+                "perf report -s symbol --percent-limit=5 --call-graph=2 -i /report/{}.perf \
+                --addr2line=/root/.cargo/bin/addr2line > /report/{}.perf.txt 2>&1",
+                client, client
+            );
+            let _ = Command::new("docker")
+                .args(["exec", client, "sh", "-c", &perf_command])
+                .spawn()?
+                .wait()
+                .await?;
+
+            let _ = Command::new("docker")
+                .args([
+                    "exec",
+                    client,
+                    "chmod",
+                    "o+r",
+                    &format!("/report/{}.perf", client),
+                ])
+                .spawn()?
+                .wait()
+                .await?;
+
+            let _ = Command::new("docker")
+                .args([
+                    "exec",
+                    client,
+                    "perf",
+                    "archive",
+                    &format!("/report/{}.perf", client),
+                ])
+                .spawn()?
+                .wait()
+                .await?;
+
+            break;
+        }
+        tokio::time::sleep(Duration::from_secs(1)).await;
+    }
+    println!("{} perf exited? {}", client, exited);
     Ok(())
 }
 

@@ -9,23 +9,19 @@ use std::{
     borrow::Cow,
     collections::HashMap,
     slice,
+    sync::Mutex,
     time::{Duration, Instant},
 };
-
-#[cfg(not(target_os = "android"))]
-use sysinfo::{CpuExt, SystemExt};
-
-use crate::{common::CallId, webrtc};
 
 #[cfg(not(feature = "sim"))]
 use crate::webrtc::ffi::stats_observer as stats;
 #[cfg(not(feature = "sim"))]
 pub use crate::webrtc::ffi::stats_observer::RffiStatsObserver;
-
 #[cfg(feature = "sim")]
 use crate::webrtc::sim::stats_observer as stats;
 #[cfg(feature = "sim")]
 pub use crate::webrtc::sim::stats_observer::RffiStatsObserver;
+use crate::{common::CallId, webrtc};
 
 /// How often to clean up old stats.
 const CLEAN_UP_STATS_TICKS: u32 = 60;
@@ -44,6 +40,8 @@ struct Stats {
     video_send: HashMap<u32, VideoSenderStatistics>,
     audio_recv: HashMap<u32, (Instant, AudioReceiverStatistics)>,
     video_recv: HashMap<u32, (Instant, VideoReceiverStatistics)>,
+
+    report_json: Mutex<String>,
 }
 /// Collector object for obtaining statistics.
 #[derive(Debug)]
@@ -155,10 +153,10 @@ impl StatsObserver {
         {
             // Be careful adding new stats;
             // some have a fair amount of persistent state that raises memory usage.
-            self.system_stats.refresh_cpu();
+            self.system_stats.refresh_cpu_usage();
             info!(
                 "ringrtc_stats!,system,{cpu_pct:.0}%",
-                cpu_pct = self.system_stats.global_cpu_info().cpu_usage(),
+                cpu_pct = self.system_stats.global_cpu_usage(),
             )
         }
     }
@@ -304,7 +302,7 @@ impl StatsObserver {
             // Do an initial refresh for meaningful results on the first log.
             // Be careful adding new stats;
             // some have a fair amount of persistent state that raises memory usage.
-            stats.refresh_cpu();
+            stats.refresh_cpu_usage();
             stats
         };
 
@@ -320,7 +318,7 @@ impl StatsObserver {
     }
 
     /// Invoked when statistics are received via the stats observer callback.
-    fn on_stats_complete(&mut self, media_statistics: &MediaStatistics) {
+    fn on_stats_complete(&mut self, media_statistics: &MediaStatistics, report_json: String) {
         let seconds_elapsed = if self.stats.timestamp_us > 0 {
             (media_statistics.timestamp_us - self.stats.timestamp_us) as f32 / 1_000_000.0
         } else {
@@ -331,6 +329,9 @@ impl StatsObserver {
         self.print_system();
 
         let stats = &mut self.stats;
+        let mut stats_report_json = stats.report_json.lock().unwrap();
+        *stats_report_json = report_json;
+        drop(stats_report_json);
 
         if media_statistics.audio_sender_statistics_size > 0 {
             let audio_senders = unsafe {
@@ -453,6 +454,21 @@ impl StatsObserver {
     pub fn rffi(&self) -> &webrtc::Arc<RffiStatsObserver> {
         &self.rffi
     }
+
+    pub fn take_stats_report(&self) -> Option<String> {
+        let mut stats_report_json = self.stats.report_json.lock().unwrap();
+        if !stats_report_json.is_empty() {
+            Some(std::mem::take(&mut *stats_report_json))
+        } else {
+            None
+        }
+    }
+
+    pub fn set_collect_raw_stats_report(&self, collect_raw_stats_report: bool) {
+        unsafe {
+            stats::Rust_setCollectRawStatsReport(self.rffi.as_borrowed(), collect_raw_stats_report)
+        };
+    }
 }
 
 #[repr(C)]
@@ -573,12 +589,18 @@ pub struct MediaStatistics {
 extern "C" fn stats_observer_OnStatsComplete(
     stats_observer: webrtc::ptr::Borrowed<StatsObserver>,
     values: webrtc::ptr::Borrowed<MediaStatistics>,
+    report_json: webrtc::ptr::Borrowed<std::os::raw::c_char>,
 ) {
     // Safe because the observer should still be alive (it was just passed to us)
     if let Some(stats_observer) = unsafe { stats_observer.as_mut() } {
+        let report_json = unsafe {
+            std::ffi::CStr::from_ptr(report_json.as_ptr())
+                .to_string_lossy()
+                .into_owned()
+        };
         // Safe because the values should still be alive (it was just passed to us)
         if let Some(values) = unsafe { values.as_ref() } {
-            stats_observer.on_stats_complete(values);
+            stats_observer.on_stats_complete(values, report_json);
         } else {
             error!("stats_observer_OnStatsComplete() with null values");
         }
@@ -594,6 +616,7 @@ pub struct StatsObserverCallbacks {
     pub onStatsComplete: extern "C" fn(
         stats_observer: webrtc::ptr::Borrowed<StatsObserver>,
         values: webrtc::ptr::Borrowed<MediaStatistics>,
+        report_json: webrtc::ptr::Borrowed<std::os::raw::c_char>,
     ),
 }
 
