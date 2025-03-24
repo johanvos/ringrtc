@@ -1,8 +1,8 @@
-name: Release Java
+name: Release Java tring
 on:
   push:
     tags:
-      - 'tring*'
+      - 'tring-*'
 
 jobs:
   build:
@@ -60,7 +60,7 @@ jobs:
         echo "CLASSIFIER=$classifier" >> $GITHUB_ENV
       shell: bash
     - name: Setup Java and Apache Maven
-      uses: actions/setup-java@v3
+      uses: actions/setup-java@v4
       with:
         distribution: 'temurin'
         java-version: '22'
@@ -120,14 +120,6 @@ jobs:
       run: |
         cd src/java/tring
         mvn -Dclassifier=${{ env.CLASSIFIER }} deploy
-      env:
-        MAVEN_USERNAME: ${{ secrets.GLUON_NEXUS_USERNAME }}
-        MAVEN_CENTRAL_TOKEN: ${{ secrets.GLUON_NEXUS_PASSWORD }}
-    - name: Release Tring API
-      if: ${{ startsWith(github.ref_name, 'tringapi-') && runner.os == 'Linux' }}
-      run: |
-        cd src/java/tringapi
-        mvn deploy
       env:
         MAVEN_USERNAME: ${{ secrets.GLUON_NEXUS_USERNAME }}
         MAVEN_CENTRAL_TOKEN: ${{ secrets.GLUON_NEXUS_PASSWORD }}
