@@ -635,24 +635,27 @@ public class TringServiceImpl implements TringService {
         LOG.info("Execution state = " + submit.state());
     }
     
-    
+    @Override
     public byte[] getCallLinkBytes(String url) {
-        String input = "your_input_string";
-        byte[] strBytes = (input + "\0").getBytes(StandardCharsets.UTF_8);
-        MemorySegment cString = scope.allocate(strBytes.length);
-        cString.copyFrom(MemorySegment.ofArray(strBytes));        
-        CountDownLatch cdl = new CountDownLatch(1);
-        
-        CallLinkCallbackImpl sci = new CallLinkCallbackImpl(cdl);
-        MemorySegment seg = rtc_calllinks_CallLinkRootKey_parse$callback.allocate(sci, scope);
-        tringlib_h.rtc_calllinks_CallLinkRootKey_parse(cString, MemorySegment.NULL, seg);
         try {
+
+            System.err.println("[TSI] getCallLinkBytes");
+            byte[] strBytes = (url + "\0").getBytes(StandardCharsets.UTF_8);
+            MemorySegment cString = scope.allocate(strBytes.length);
+            cString.copyFrom(MemorySegment.ofArray(strBytes));
+            CountDownLatch cdl = new CountDownLatch(1);
+
+            CallLinkCallbackImpl sci = new CallLinkCallbackImpl(cdl);
+            MemorySegment seg = rtc_calllinks_CallLinkRootKey_parse$callback.allocate(sci, scope);
+            System.err.println("[TSI] invoke rust call");
+            tringlib_h.rtc_calllinks_CallLinkRootKey_parse(cString, MemorySegment.NULL, seg);
             boolean res = cdl.await(2, TimeUnit.SECONDS);
-            System.err.println("Waited, res = "+res+" and answer = " + sci.resultBytes);
-        } catch (InterruptedException ex) {
+            System.err.println("Waited, res = " + res + " and answer = " + sci.resultBytes);
+            return sci.resultBytes;
+        } catch (Exception ex) {
             Logger.getLogger(TringServiceImpl.class.getName()).log(Level.SEVERE, null, ex);
+            throw new RuntimeException(ex);
         }
-        return sci.resultBytes;
     }
     
     
@@ -668,17 +671,18 @@ public class TringServiceImpl implements TringService {
         @Override
         public void apply(MemorySegment context, MemorySegment resultPtr) {
             System.err.println("TRINGServiceImpl, got answer from calllink.parse");
-
             MemorySegment ptr = resultPtr.get(ValueLayout.ADDRESS, 0); // Read ptr (byte array address)
             long count = resultPtr.get(ValueLayout.JAVA_LONG, ValueLayout.ADDRESS.byteSize()); // Read count (length)
-
+            System.err.println("COUNT = "+ count);
+            System.err.println("PTR = " + ptr);
+            MemorySegment ptr2 = rtc_Bytes.ptr(resultPtr);
+            System.err.println("PTR2 = " + ptr2);
             // Read the byte array from native memory
             resultBytes = new byte[(int) count];
             MemorySegment byteArraySegment = MemorySegment.ofArray(resultBytes);
-            MemorySegment.copy(ptr, 0, byteArraySegment, 0, count);
+            MemorySegment.copy(ptr2, 0, byteArraySegment, 0, count);
 
             System.err.println("TRING, bytes to send = " + java.util.Arrays.toString(resultBytes));
-            api.answerCallback(resultBytes);
             System.err.println("TRING, answer sent");
             cdl.countDown();
         }

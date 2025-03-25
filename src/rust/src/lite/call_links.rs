@@ -300,7 +300,7 @@ pub fn delete_call_link(
     )
 }
 
-#[cfg(any(target_os = "ios", feature = "check-all"))]
+#[cfg(any(target_os = "ios", feature = "java", feature = "check-all"))]
 pub mod ios {
     use std::ffi::{c_char, c_void, CStr};
 
@@ -332,14 +332,19 @@ pub mod ios {
         context: *mut c_void,
         callback: extern "C" fn(context: *mut c_void, result: rtc_Bytes),
     ) -> bool {
+        info!("[RUST] clrkp 0");
         let string = CStr::from_ptr(string);
+        info!("[RUST] clrkp 1");
         let root_key = string
             .to_str()
             .ok()
             .and_then(|s| CallLinkRootKey::try_from(s).ok());
+        info!("[RUST] clrkp 2");
         match root_key {
             Some(key) => {
+                info!("[RUST] clrkp 3, bytes = {:?}", key.bytes().as_slice());
                 callback(context, rtc_Bytes::from(key.bytes().as_slice()));
+                info!("[RUST] clrkp 4, bytes = {:?}", key.bytes().as_slice());
                 true
             }
             None => false,

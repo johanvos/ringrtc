@@ -238,7 +238,7 @@ impl ResponseCallbacks {
     }
 }
 
-#[cfg(any(target_os = "ios", feature = "check-all"))]
+#[cfg(any(target_os = "ios", feature = "java", feature = "check-all"))]
 pub mod ios {
     use libc::{c_void, size_t};
 

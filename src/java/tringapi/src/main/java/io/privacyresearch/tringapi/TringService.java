@@ -69,4 +69,6 @@ public interface TringService {
 
     public void setGroupBandWidth(int clientId, int bandwidthMode);
 
+    public byte[] getCallLinkBytes(String url);
+
 }

@@ -148,8 +148,13 @@ impl TryFrom<&str> for CallLinkRootKey {
     type Error = anyhow::Error;
 
     fn try_from(value: &str) -> std::result::Result<Self, Self::Error> {
+        info!("CLRK0, val = {}", value);
         let bytes = base16::ConsonantBase16::parse_with_separators(value, 2)
-            .map_err(|_| anyhow!("invalid root key string"))?;
+            .map_err(|e| {
+                error!("Parsing error: {:?}", e);
+                anyhow!("invalid root key string")
+            })?;
+        info!("CLRK1, bytes = {:?}", bytes);
         Self::try_from(bytes.as_slice())
     }
 }
@@ -158,7 +163,9 @@ impl TryFrom<&[u8]> for CallLinkRootKey {
     type Error = anyhow::Error;
 
     fn try_from(value: &[u8]) -> std::result::Result<Self, Self::Error> {
+        info!("CLRK3");
         let bytes: [u8; 16] = value.try_into()?;
+        info!("CLRK4");
 
         if Self::has_repeated_chunk(&bytes) {
             bail!("invalid root key adjacent bytes");
