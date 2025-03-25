@@ -640,28 +640,23 @@ public class TringServiceImpl implements TringService {
     }
     
     @Override
-    public byte[] getCallLinkBytes(String url) {
+    public byte[] getCallLinkBytes(String link) {
         try {
-
-            System.err.println("[TSI] getCallLinkBytes");
-            byte[] strBytes = (url + "\0").getBytes(StandardCharsets.UTF_8);
+            byte[] strBytes = (link + "\0").getBytes(StandardCharsets.UTF_8);
             MemorySegment cString = scope.allocate(strBytes.length);
             cString.copyFrom(MemorySegment.ofArray(strBytes));
             CountDownLatch cdl = new CountDownLatch(1);
-
-            CallLinkCallbackImpl sci = new CallLinkCallbackImpl(cdl);
-            MemorySegment seg = rtc_calllinks_CallLinkRootKey_parse$callback.allocate(sci, scope);
-            System.err.println("[TSI] invoke rust call");
-            tringlib_h.rtc_calllinks_CallLinkRootKey_parse(cString, MemorySegment.NULL, seg);
-            boolean res = cdl.await(2, TimeUnit.SECONDS);
-            System.err.println("Waited, res = " + res + " and answer = " + sci.resultBytes);
-            return sci.resultBytes;
+            CallLinkCallbackImpl callback = new CallLinkCallbackImpl(cdl);
+            MemorySegment callbackSegment = rtc_calllinks_CallLinkRootKey_parse$callback.allocate(callback, scope);
+            tringlib_h.rtc_calllinks_CallLinkRootKey_parse(cString, MemorySegment.NULL, callbackSegment);
+            boolean result = cdl.await(2, TimeUnit.SECONDS);
+            LOG.info("Got calllinkbytes within 2 seconds? " + result);
+            return callback.resultBytes;
         } catch (Exception ex) {
-            Logger.getLogger(TringServiceImpl.class.getName()).log(Level.SEVERE, null, ex);
+            LOG.log(Level.SEVERE, null, ex);
             throw new RuntimeException(ex);
         }
     }
-    
     
     class CallLinkCallbackImpl implements rtc_calllinks_CallLinkRootKey_parse$callback.Function {
 
@@ -674,20 +669,11 @@ public class TringServiceImpl implements TringService {
 
         @Override
         public void apply(MemorySegment context, MemorySegment resultPtr) {
-            System.err.println("TRINGServiceImpl, got answer from calllink.parse");
-            MemorySegment ptr = resultPtr.get(ValueLayout.ADDRESS, 0); // Read ptr (byte array address)
-            long count = resultPtr.get(ValueLayout.JAVA_LONG, ValueLayout.ADDRESS.byteSize()); // Read count (length)
-            System.err.println("COUNT = "+ count);
-            System.err.println("PTR = " + ptr);
             MemorySegment ptr2 = rtc_Bytes.ptr(resultPtr);
-            System.err.println("PTR2 = " + ptr2);
-            // Read the byte array from native memory
+            long count = rtc_Bytes.count(resultPtr);
             resultBytes = new byte[(int) count];
             MemorySegment byteArraySegment = MemorySegment.ofArray(resultBytes);
             MemorySegment.copy(ptr2, 0, byteArraySegment, 0, count);
-
-            System.err.println("TRING, bytes to send = " + java.util.Arrays.toString(resultBytes));
-            System.err.println("TRING, answer sent");
             cdl.countDown();
         }
 
