@@ -90,7 +90,7 @@ public class TringServiceImpl implements TringService {
     }
 
     private void initiate() {
-        scope = Arena.ofShared();
+        createScope();
         tringlib_h.initRingRTC(toJString(scope, "Hello from Java"));
         this.callEndpoint = tringlib_h.createCallEndpoint(createStatusCallback(), 
                 createAnswerCallback(), createOfferCallback(),
@@ -100,6 +100,10 @@ public class TringServiceImpl implements TringService {
         initializeNative(this.callEndpoint);
     }
     
+    void createScope() {
+        scope = Arena.ofShared();
+    }
+
     private void processAudioInputs() {
         LOG.warning("Process Audio Inputs asked, not supported!");
         MemorySegment audioInputs = tringlib_h.getAudioInputs(scope, callEndpoint,0);
