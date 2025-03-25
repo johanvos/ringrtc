@@ -5,15 +5,20 @@ import io.privacyresearch.tringapi.TringFrame;
 import io.privacyresearch.tringapi.TringService;
 import java.io.IOException;
 import java.lang.foreign.Arena;
+import java.lang.foreign.FunctionDescriptor;
+import java.lang.foreign.Linker;
 import java.lang.foreign.MemoryLayout;
 import java.lang.foreign.MemorySegment;
+import java.lang.foreign.SymbolLookup;
 import java.lang.foreign.ValueLayout;
+import java.lang.invoke.MethodHandle;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.net.http.HttpResponse.BodyHandlers;
 import java.nio.ByteBuffer;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
@@ -23,10 +28,12 @@ import java.util.Map;
 import java.util.Map.Entry;
 import java.util.UUID;
 import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.TimeUnit;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
@@ -627,4 +634,58 @@ public class TringServiceImpl implements TringService {
         Future<?> submit = executor.submit(r);
         LOG.info("Execution state = " + submit.state());
     }
+    
+    
+    public byte[] getCallLinkBytes(String url) {
+        String input = "your_input_string";
+        byte[] strBytes = (input + "\0").getBytes(StandardCharsets.UTF_8);
+        MemorySegment cString = scope.allocate(strBytes.length);
+        cString.copyFrom(MemorySegment.ofArray(strBytes));        
+        CountDownLatch cdl = new CountDownLatch(1);
+        
+        CallLinkCallbackImpl sci = new CallLinkCallbackImpl(cdl);
+        MemorySegment seg = rtc_calllinks_CallLinkRootKey_parse$callback.allocate(sci, scope);
+        tringlib_h.rtc_calllinks_CallLinkRootKey_parse(cString, MemorySegment.NULL, seg);
+        try {
+            boolean res = cdl.await(2, TimeUnit.SECONDS);
+            System.err.println("Waited, res = "+res+" and answer = " + sci.resultBytes);
+        } catch (InterruptedException ex) {
+            Logger.getLogger(TringServiceImpl.class.getName()).log(Level.SEVERE, null, ex);
+        }
+        return sci.resultBytes;
+    }
+    
+    
+    class CallLinkCallbackImpl implements rtc_calllinks_CallLinkRootKey_parse$callback.Function {
+
+        CountDownLatch cdl;
+        byte[] resultBytes = new byte[0];
+
+        CallLinkCallbackImpl(CountDownLatch cdl) {
+            this.cdl = cdl;
+        }
+
+        @Override
+        public void apply(MemorySegment context, MemorySegment resultPtr) {
+            System.err.println("TRINGServiceImpl, got answer from calllink.parse");
+
+            MemorySegment ptr = resultPtr.get(ValueLayout.ADDRESS, 0); // Read ptr (byte array address)
+            long count = resultPtr.get(ValueLayout.JAVA_LONG, ValueLayout.ADDRESS.byteSize()); // Read count (length)
+
+            // Read the byte array from native memory
+            resultBytes = new byte[(int) count];
+            MemorySegment byteArraySegment = MemorySegment.ofArray(resultBytes);
+            MemorySegment.copy(ptr, 0, byteArraySegment, 0, count);
+
+            System.err.println("TRING, bytes to send = " + java.util.Arrays.toString(resultBytes));
+            api.answerCallback(resultBytes);
+            System.err.println("TRING, answer sent");
+            cdl.countDown();
+        }
+
+        byte[] getAnswer() {
+            return this.resultBytes;
+        }
+    }
+
 }
