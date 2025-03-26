@@ -642,9 +642,7 @@ public class TringServiceImpl implements TringService {
     @Override
     public byte[] getCallLinkBytes(String link) {
         try {
-            byte[] strBytes = (link + "\0").getBytes(StandardCharsets.UTF_8);
-            MemorySegment cString = scope.allocate(strBytes.length);
-            cString.copyFrom(MemorySegment.ofArray(strBytes));
+            MemorySegment cString = scope.allocateFrom(link);
             CountDownLatch cdl = new CountDownLatch(1);
             CallLinkCallbackImpl callback = new CallLinkCallbackImpl(cdl);
             MemorySegment callbackSegment = rtc_calllinks_CallLinkRootKey_parse$callback.allocate(callback, scope);
@@ -677,9 +675,6 @@ public class TringServiceImpl implements TringService {
             cdl.countDown();
         }
 
-        byte[] getAnswer() {
-            return this.resultBytes;
-        }
     }
 
 }
