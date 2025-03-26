@@ -5,15 +5,20 @@ import io.privacyresearch.tringapi.TringFrame;
 import io.privacyresearch.tringapi.TringService;
 import java.io.IOException;
 import java.lang.foreign.Arena;
+import java.lang.foreign.FunctionDescriptor;
+import java.lang.foreign.Linker;
 import java.lang.foreign.MemoryLayout;
 import java.lang.foreign.MemorySegment;
+import java.lang.foreign.SymbolLookup;
 import java.lang.foreign.ValueLayout;
+import java.lang.invoke.MethodHandle;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.net.http.HttpResponse.BodyHandlers;
 import java.nio.ByteBuffer;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
@@ -23,10 +28,12 @@ import java.util.Map;
 import java.util.Map.Entry;
 import java.util.UUID;
 import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.TimeUnit;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
@@ -83,7 +90,7 @@ public class TringServiceImpl implements TringService {
     }
 
     private void initiate() {
-        scope = Arena.ofShared();
+        createScope();
         tringlib_h.initRingRTC(toJString(scope, "Hello from Java"));
         this.callEndpoint = tringlib_h.createCallEndpoint(createStatusCallback(), 
                 createAnswerCallback(), createOfferCallback(),
@@ -93,6 +100,10 @@ public class TringServiceImpl implements TringService {
         initializeNative(this.callEndpoint);
     }
     
+    void createScope() {
+        scope = Arena.ofShared();
+    }
+
     private void processAudioInputs() {
         LOG.warning("Process Audio Inputs asked, not supported!");
         MemorySegment audioInputs = tringlib_h.getAudioInputs(scope, callEndpoint,0);
@@ -627,4 +638,43 @@ public class TringServiceImpl implements TringService {
         Future<?> submit = executor.submit(r);
         LOG.info("Execution state = " + submit.state());
     }
+    
+    @Override
+    public byte[] getCallLinkBytes(String link) {
+        try {
+            MemorySegment cString = scope.allocateFrom(link);
+            CountDownLatch cdl = new CountDownLatch(1);
+            CallLinkCallbackImpl callback = new CallLinkCallbackImpl(cdl);
+            MemorySegment callbackSegment = rtc_calllinks_CallLinkRootKey_parse$callback.allocate(callback, scope);
+            tringlib_h.rtc_calllinks_CallLinkRootKey_parse(cString, MemorySegment.NULL, callbackSegment);
+            boolean result = cdl.await(2, TimeUnit.SECONDS);
+            LOG.info("Got calllinkbytes within 2 seconds? " + result);
+            return callback.resultBytes;
+        } catch (Exception ex) {
+            LOG.log(Level.SEVERE, null, ex);
+            throw new RuntimeException(ex);
+        }
+    }
+    
+    class CallLinkCallbackImpl implements rtc_calllinks_CallLinkRootKey_parse$callback.Function {
+
+        CountDownLatch cdl;
+        byte[] resultBytes = new byte[0];
+
+        CallLinkCallbackImpl(CountDownLatch cdl) {
+            this.cdl = cdl;
+        }
+
+        @Override
+        public void apply(MemorySegment context, MemorySegment resultPtr) {
+            MemorySegment ptr2 = rtc_Bytes.ptr(resultPtr);
+            long count = rtc_Bytes.count(resultPtr);
+            resultBytes = new byte[(int) count];
+            MemorySegment byteArraySegment = MemorySegment.ofArray(resultBytes);
+            MemorySegment.copy(ptr2, 0, byteArraySegment, 0, count);
+            cdl.countDown();
+        }
+
+    }
+
 }

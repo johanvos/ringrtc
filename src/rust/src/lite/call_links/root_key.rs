@@ -149,7 +149,10 @@ impl TryFrom<&str> for CallLinkRootKey {
 
     fn try_from(value: &str) -> std::result::Result<Self, Self::Error> {
         let bytes = base16::ConsonantBase16::parse_with_separators(value, 2)
-            .map_err(|_| anyhow!("invalid root key string"))?;
+            .map_err(|e| {
+                error!("Parsing error: {:?}", e);
+                anyhow!("invalid root key string")
+            })?;
         Self::try_from(bytes.as_slice())
     }
 }

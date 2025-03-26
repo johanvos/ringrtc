@@ -113,4 +113,8 @@ public class TringBridge {
         service.setGroupBandWidth(clientId, bandwidthMode);
     }
 
+    public byte[] getCallLinkBytes(String url) {
+        System.err.println("[TB] getCallLinkBytes for "+url);
+        return service.getCallLinkBytes(url);
+    }
 }

@@ -20,7 +20,13 @@
         <dependency>
             <groupId>io.privacyresearch</groupId>
             <artifactId>tringapi</artifactId>
-            <version>0.0.14</version>
+            <version>0.0.15-SNAPSHOT</version>
+        </dependency>
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter-api</artifactId>
+            <version>5.5.2</version>
+            <scope>test</scope>
         </dependency>
     </dependencies>
     <build>
