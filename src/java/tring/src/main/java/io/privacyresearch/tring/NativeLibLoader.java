@@ -9,12 +9,14 @@ import java.nio.file.StandardCopyOption;
 public class NativeLibLoader {
 
     public static String loadLibrary() throws IOException {
-        String libName = "/"+System.mapLibraryName("ringrtc");
-        System.err.println("Will try to load "+libName);
-        InputStream is = NativeLibLoader.class.getResourceAsStream(libName);
-        Path target = Files.createTempFile("", "");
-        Files.copy(is, target, StandardCopyOption.REPLACE_EXISTING);
+        String libraryName = System.mapLibraryName("ringrtc");
+        System.err.println("Will try to load " + libraryName);
+
+        InputStream library = NativeLibLoader.class.getResourceAsStream("/" + libraryName);
+        Path target = Files.createTempFile("ringrtc_", "_" + libraryName);
+        Files.copy(library, target, StandardCopyOption.REPLACE_EXISTING);
         System.load(target.toString());
-        return libName;
+
+        return libraryName;
     }
 }
