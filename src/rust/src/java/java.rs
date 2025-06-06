@@ -440,6 +440,16 @@ impl EventReporter {
                     }
                 }
             }
+            Event::RemoteSharingScreenChange(peer_id, enabled) => {
+                info!("RemoteSharingScreenChange to {}", enabled);
+                unsafe {
+                    if enabled {
+                        (self.statusCallback)(1, 1, 22, 33);
+                    } else {
+                        (self.statusCallback)(1, 1, 22, 34);
+                    }
+                }
+            }
             Event::SendHttpRequest {
                 request_id,
                 request:
