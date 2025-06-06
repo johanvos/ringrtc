@@ -276,6 +276,9 @@ public class TringServiceImpl implements TringService {
                 bb.get(raw);
                 TringFrame answer = new TringFrame(w, h, -1, raw);
                 return answer;
+            } else {
+                LOG.severe("We asked for a remote video frame, but didn't get one. Return null.");
+                return null;
             }
         } catch (Throwable t) {
             t.printStackTrace();
@@ -386,6 +389,10 @@ public class TringServiceImpl implements TringService {
 
     public void handlePeekResponse(List joined, byte[] creator, String era, long maxDevices, long deviceCount) {
         LOG.info("JAVA: GOT PEEK RESULT");
+        if (creator == null) {
+            LOG.info("Empty creator, ignore");
+            return;
+        }
         List<UUID> joinedMembers = getUUIDs(joined);
         ByteBuffer bb = ByteBuffer.wrap(creator);
         UUID creatorId = new UUID(bb.getLong(), bb.getLong());
