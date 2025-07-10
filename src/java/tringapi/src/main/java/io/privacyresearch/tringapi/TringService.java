@@ -67,6 +67,8 @@ public interface TringService {
 
     public long createGroupCallClient(byte[] groupId, String sfu, byte[] hkdf);
 
+    public void joinGroupCall();
+
     public void setGroupBandWidth(int clientId, int bandwidthMode);
 
     public byte[] getCallLinkBytes(String url);

@@ -26,6 +26,8 @@ public interface TringApi {
 
     public byte[] requestGroupMemberInfo(byte[] groupId);
 
+    public void sendOpaqueGroupCallMessage(byte[] groupIdentifier, byte[] opaque, int urgency);
+
     public void sendOpaqueCallMessage(UUID recipient, byte[] opaque, int urgency);
 
     public void updateRemoteDevices(List<Integer> demuxIds);

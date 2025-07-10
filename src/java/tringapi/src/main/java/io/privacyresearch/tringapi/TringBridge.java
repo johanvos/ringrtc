@@ -109,6 +109,10 @@ public class TringBridge {
         return service.createGroupCallClient(groupId, sfu, hkdf);
     }
 
+    public void joinGroupCall() {
+        service.joinGroupCall();
+    }
+
     public void setGroupBandWidth(int clientId, int bandwidthMode) {
         service.setGroupBandWidth(clientId, bandwidthMode);
     }

@@ -219,25 +219,33 @@ public class TringServiceImpl implements TringService {
 
     // see Android IncomingGroupCallActionProcessor.handleAcceptCall
     @Override
-    public long createGroupCallClient(byte[] nogroupId, String sfu, byte[] hkdf) {
-        LOG.info("delegate creategroupcallclient to rust, groupId = "+Arrays.toString(localGroupId));
+    public long createGroupCallClient(byte[] groupId, String sfu, byte[] hkdf) {
+        this.localGroupId = groupId;
+        LOG.info("delegate creategroupcallclient to rust, groupId = " + Arrays.toString(localGroupId));
         long myclientId = tringlib_h.createGroupCallClient(callEndpoint, toJByteArray(scope, localGroupId),
                 toJString(scope, sfu), toJByteArray(scope, hkdf));
-        this.clientId = (int)myclientId;
-        LOG.info("Created client, id = "+clientId+". Will connect now");
-        tringlib_h.setOutgoingAudioMuted(callEndpoint, (int)clientId, true);
-        tringlib_h.setOutgoingVideoMuted(callEndpoint, (int)clientId, true);
-        setGroupBandWidth((int)clientId, 2); // 2 = NORMAL
-        tringlib_h.group_connect(callEndpoint, (int)clientId);
-        LOG.info("Connected, id = "+clientId);
+        this.clientId = (int) myclientId;
+        LOG.info("Created client, id = " + clientId + ". Will connect now");
+        tringlib_h.setOutgoingAudioMuted(callEndpoint, (int) clientId, true);
+        tringlib_h.setOutgoingVideoMuted(callEndpoint, (int) clientId, true);
+        setGroupBandWidth((int) clientId, 1); // 1 = NORMAL
+        tringlib_h.group_connect(callEndpoint, (int) clientId);
+        LOG.info("Connected, id = " + clientId);
         LOG.info("Ask for video");
-        requestVideo(callEndpoint, (int)clientId, 1);
+        requestVideo(callEndpoint, (int) clientId, 1);
         LOG.info("Asked for video");
-        tringlib_h.setOutgoingAudioMuted(callEndpoint, (int)clientId, false);
-        tringlib_h.setOutgoingVideoMuted(callEndpoint, (int)clientId, false);
-        setGroupBandWidth((int)clientId, 2); // 2 = NORMAL
-        tringlib_h.join(callEndpoint, (int)clientId);
+        tringlib_h.setOutgoingAudioMuted(callEndpoint, (int) clientId, false);
+        tringlib_h.setOutgoingVideoMuted(callEndpoint, (int) clientId, false);
+        setGroupBandWidth((int) clientId, 1); // 1 = NORMAL
+        LOG.info("groupCall created, return clientId " + clientId);
         return clientId;
+    }
+
+    @Override
+    public void joinGroupCall() {
+        LOG.info("Joining groupcall");
+        tringlib_h.join(callEndpoint, (int)clientId);
+        LOG.info("Joined groupcall");
     }
 
     @Override
@@ -566,6 +574,7 @@ public class TringServiceImpl implements TringService {
             if (opcode == 2) {
                 // connectionStateChange
                 ByteBuffer bb = ByteBuffer.wrap(bytes);
+                LOG.info("bb = "+bb);
                 int clientId = bb.getInt();
                 int connectionStatus = bb.getInt();
                 LOG.info("ConnectionState for " + clientId + " changed to " + connectionStatus);
@@ -599,8 +608,37 @@ public class TringServiceImpl implements TringService {
                 bb.get(messageb);
                 api.sendOpaqueCallMessage(recipient, messageb, 0);
             }
+            if (opcode == 6) {
+                LOG.info("Joinstatechanged");
+                ByteBuffer bb = ByteBuffer.wrap(bytes);
+                int clientId = bb.getInt();
+                int joinStatus = bb.getInt();
+                LOG.info("JoinStatus, cid = " + clientId+" and js = "+joinStatus);
+                processJoinStatus(joinStatus);
+            }
+            if (opcode == 7) {
+                LOG.info("Needs to send a SignalCallMessage");
+                ByteBuffer bb = ByteBuffer.wrap(bytes);
+                int groupIdLen = bb.getInt();
+                byte[] groupId = new byte[groupIdLen];
+                bb.get(groupId);
+                LOG.info("GroupId = "+Arrays.toString(groupId));
+                byte[] msg = new byte[bb.remaining() - 1];
+                bb.get(msg);
+                byte urgency = bb.get();
+                api.sendOpaqueGroupCallMessage(groupId, msg, urgency);
+                LOG.info("Done sending (request to) signal call message");
+            }
         }
+    }
 
+    void processJoinStatus(int status) {
+        LOG.info("New joinstatus = "+status);
+        if (status == 3) {
+            LOG.info("We joined, now do a group call ring");
+            tringlib_h.group_ring(callEndpoint, 1);
+        }
+        LOG.info("JoinStatus processed");
     }
 
     MemorySegment createVideoFrameCallback() {
