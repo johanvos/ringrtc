@@ -513,6 +513,18 @@ impl EventReporter {
                     "SendCallMessageToGroup! gid = {:?}, msg = {:?}, urg = {:?}",
                     group_id, message, urgency
                 );
+                let mut payload: Vec<u8> = Vec::new();
+                let glen: i32 = group_id.len().try_into().unwrap();
+                payload.extend_from_slice(&glen.to_be_bytes());
+
+                payload.extend(&group_id);
+                payload.extend(&message);
+
+                payload.push(urgency as u8);
+                let data = JArrayByte::new(payload);
+                unsafe {
+                    (self.genericCallback)(7, data);
+                }
             }
             Event::GroupUpdate(GroupUpdate::RequestMembershipProof(client_id)) => {
                 info!("RMP");
@@ -540,6 +552,7 @@ impl EventReporter {
                 client_id,
                 connection_state,
             )) => {
+                info!("invoke CSTATEChanged");
                 let mut payload: Vec<u8> = Vec::new();
                 let cid: i32 = client_id.try_into().unwrap();
                 payload.extend_from_slice(&cid.to_be_bytes());
@@ -555,7 +568,17 @@ impl EventReporter {
                 info!("NYI NetworkRouteChanged");
             }
             Event::GroupUpdate(GroupUpdate::JoinStateChanged(client_id, join_state)) => {
-                info!("NYI JoinStatesChanged");
+                info!("JoinStatesChanged");
+                let mut payload: Vec<u8> = Vec::new();
+                let cid: i32 = client_id.try_into().unwrap();
+                payload.extend_from_slice(&cid.to_be_bytes());
+                let csid: i32 = join_state.ordinal();
+                payload.extend_from_slice(&csid.to_be_bytes());
+                let data = JArrayByte::new(payload);
+                unsafe {
+                    (self.genericCallback)(6, data);
+                }
+                info!("invoked CSTATEChanged");
             }
             Event::GroupUpdate(GroupUpdate::RemoteDeviceStatesChanged(
                 client_id,
@@ -836,6 +859,7 @@ impl SignalingSender for EventReporter {
         urgency: group_call::SignalingMessageUrgency,
         recipients_override: HashSet<UserId>,
     ) -> Result<()> {
+        info!("Need to send GROUPSIGNALING ");
         self.send(Event::SendCallMessageToGroup {
             group_id,
             message,
@@ -1634,6 +1658,16 @@ pub unsafe extern "C" fn setBandwidthMode (endpoint: i64,
     1
 }
 */
+
+#[no_mangle]
+pub unsafe extern "C" fn group_ring(endpoint: i64, client_id: u32) -> i64 {
+    info!("need to RING!");
+    let callendpoint = ptr_as_mut(endpoint as *mut CallEndpoint).unwrap();
+    info!("ask callmanager to RING");
+    callendpoint.call_manager.group_ring(client_id, None);
+    info!("asked callmanager to RING");
+    1
+}
 
 #[no_mangle]
 pub unsafe extern "C" fn group_connect(endpoint: i64, client_id: u32) -> i64 {

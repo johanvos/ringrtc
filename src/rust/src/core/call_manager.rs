@@ -1618,7 +1618,6 @@ where
         message_age: Duration,
     ) -> Result<()> {
         info!("handle_received_call_message():");
-
         let message = protobuf::signaling::CallMessage::decode(Bytes::from(message))?;
         match message {
             // Handle cases in the same order as classify_received_call_message_for_ringing,
@@ -2671,8 +2670,8 @@ where
         call_message: protobuf::signaling::CallMessage,
         urgency: group_call::SignalingMessageUrgency,
     ) {
-        debug!("send_signaling_message():");
-        debug!("  recipient: {}", uuid_to_string(&recipient_id));
+        info!("send_signaling_message():");
+        info!("  recipient: {}", uuid_to_string(&recipient_id));
 
         let platform = self.platform.lock().expect("platform.lock()");
         let mut bytes = BytesMut::with_capacity(call_message.encoded_len());
@@ -2698,8 +2697,8 @@ where
         urgency: group_call::SignalingMessageUrgency,
         recipients_override: HashSet<UserId>,
     ) {
-        debug!("send_signaling_message_to_group():");
-        debug!("  group ID: {}", uuid_to_string(&group_id));
+        info!("send_signaling_message_to_group():");
+        info!("  group ID: {}", uuid_to_string(&group_id));
 
         let platform = self.platform.lock().expect("platform.lock()");
         let mut bytes = BytesMut::with_capacity(call_message.encoded_len());
